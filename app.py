@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import json
 import os
 from datetime import timedelta
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_deepseek import ChatDeepSeek
 from plotly.subplots import make_subplots
 import streamlit as st
 try:
@@ -22,11 +25,61 @@ except Exception as exc:
     _bilstm_error = str(exc)
 
 # --- Constants & Config ---
-DATA_PATH = Path(__file__).parent / "IAQ Baqubah Teaching Hospital .csv"
+DATA_PATH = Path(__file__).parent / "cleaned_dataset.csv"
 DEFAULT_METRICS = ["PM2.5", "PM10", "CO2", "Temp", "Hum", "TVOC"]
 FORECAST_HOURS_CHOICES = [1, 3, 6, 12]
 
 st.set_page_config(page_title="V-IndoorCARE Prototype", layout="wide", page_icon="🫧")
+
+# --- LLM Helpers ---
+def get_deepseek_llm() -> Tuple[Optional[ChatDeepSeek], str]:
+    """Instantiate DeepSeek chat model if credentials are present."""
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    if not api_key:
+        return None, "Set DEEPSEEK_API_KEY in your environment to enable the assistant."
+
+    try:
+        llm = ChatDeepSeek(
+            model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+            api_key=api_key,
+            api_base=os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com"),
+            temperature=0.2,
+        )
+        return llm, ""
+    except Exception as exc:  # pragma: no cover - defensive for runtime issues
+        return None, str(exc)
+
+
+def pick_one_hour_point(
+    future_ts: List[pd.Timestamp],
+    predictions: List[float],
+    freq_minutes: float,
+) -> Optional[Dict[str, object]]:
+    """Pick the forecast point closest to +1 hour."""
+    if not predictions:
+        return None
+
+    steps_for_hour = max(1, int(np.ceil(60 / max(freq_minutes, 1))))
+    idx = min(len(predictions) - 1, steps_for_hour - 1)
+
+    ts_value = None
+    if future_ts:
+        ts_value = future_ts[idx] if idx < len(future_ts) else future_ts[-1]
+
+    return {"timestamp": ts_value, "value": float(predictions[idx])}
+
+
+def format_forecast_series(
+    future_ts: List[pd.Timestamp],
+    predictions: List[float],
+    limit: int = 5,
+) -> List[Dict[str, object]]:
+    """Trim and serialize forecast points for prompts."""
+    points = []
+    for ts, val in list(zip(future_ts, predictions))[:limit]:
+        ts_str = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+        points.append({"timestamp": ts_str, "value": float(val)})
+    return points
 
 # --- Theme Injection ---
 def _inject_theme() -> None:
@@ -154,12 +207,43 @@ def compute_forecast(
     return future_ts, values, note
 
 # --- Insights ---
-def generate_insights(current: Dict[str, float], forecast: List[float], metric: str, horizon_hours: int) -> str:
-    # (Existing OpenAI logic kept as placeholder)
+def generate_insights(
+    current: Dict[str, float],
+    forecast: List[float],
+    metric: str,
+    horizon_hours: int,
+    freq_minutes: float,
+    future_ts: List[pd.Timestamp],
+    llm: Optional[ChatDeepSeek] = None,
+) -> str:
+    """Generate a short summary of current conditions and +1 hour outlook."""
+    one_hour_point = pick_one_hour_point(future_ts, forecast, freq_minutes)
+    forecast_points = format_forecast_series(future_ts, forecast)
+
+    if llm:
+        try:
+            system = SystemMessage(
+                content="You are an indoor air-quality co-pilot. Be concise and avoid speculation."
+            )
+            human_prompt = (
+                "Summarize indoor air conditions now and expected state 1 hour from now.\n"
+                f"Current snapshot: {json.dumps(current, default=str)}\n"
+                f"Primary metric focus: {metric}\n"
+                f"One-hour forecast point: {json.dumps(one_hour_point, default=str)}\n"
+                f"Short forecast trajectory (~{freq_minutes:.1f} min steps): {json.dumps(forecast_points)}\n"
+                "Keep to 2-3 sentences and finish with one clear action tip if needed."
+            )
+            response = llm.invoke([system, HumanMessage(content=human_prompt)])
+            return response.content if hasattr(response, "content") else str(response)
+        except Exception:
+            pass
+
+    # (Existing OpenAI logic kept as fallback)
     key = os.getenv("OPENAI_API_KEY")
     if key:
         try:
             from openai import OpenAI
+
             client = OpenAI()
             prompt = (
                 "You are an indoor air-quality expert. Summarize today's conditions and actionable tips.\n"
@@ -184,25 +268,67 @@ def generate_insights(current: Dict[str, float], forecast: List[float], metric: 
     co2 = current.get("CO2", 0) or 0
     temp = current.get("Temp", 0) or 0
     hum = current.get("Hum", 0) or 0
-    
+
     tips = []
     if pm > 35:
         tips.append("PM2.5 elevated; increase ventilation.")
     elif pm < 15:
         tips.append("Air is clean (PM2.5 low).")
-        
+
     if co2 > 1000:
         tips.append("CO2 high (>1000 ppm); open windows immediately.")
-    
+
     if hum > 70:
         tips.append("High humidity; run dehumidifier.")
     elif hum < 30:
         tips.append("Air is dry; usage of humidifier recommended.")
-        
+
     if not tips:
         tips.append("Conditions are within optimal ranges.")
 
     return " • ".join(tips)
+
+
+def deepseek_chat_reply(
+    llm: ChatDeepSeek,
+    user_input: str,
+    snapshot: Dict[str, float],
+    metric: str,
+    one_hour_point: Optional[Dict[str, object]],
+    history: List[Dict[str, str]],
+    freq_minutes: float,
+) -> str:
+    """Chat helper to answer follow-ups using the latest context."""
+    if one_hour_point and one_hour_point.get("value") is not None:
+        timestamp_txt = one_hour_point.get("timestamp")
+        horizon_text = (
+            f"{metric} at +1h: {float(one_hour_point['value']):.2f} "
+            f"(target time {timestamp_txt})"
+        )
+    else:
+        horizon_text = "No 1-hour forecast available"
+
+    system_prompt = (
+        "You are a concise indoor air-quality assistant. Keep answers under 120 words, avoid speculation, "
+        "and always rely on the provided context."
+        f"\nCurrent metrics: {json.dumps(snapshot, default=str)}"
+        f"\n{horizon_text}"
+        f"\nData cadence is ~{freq_minutes:.1f} minutes. If data is missing, say so briefly."
+    )
+
+    messages: List[SystemMessage | HumanMessage | AIMessage] = [SystemMessage(content=system_prompt)]
+    for turn in history:
+        role = turn.get("role", "user")
+        content = turn.get("content", "")
+        if role == "assistant":
+            messages.append(AIMessage(content=content))
+        else:
+            messages.append(HumanMessage(content=content))
+
+    messages.append(HumanMessage(content=user_input))
+
+    response = llm.invoke(messages)
+    return response.content if hasattr(response, "content") else str(response)
 
 # --- Visualization Components ---
 
@@ -408,21 +534,70 @@ def main() -> None:
     
     st.caption(f"ℹ️ {note}")
 
+    one_hour_point = pick_one_hour_point(future_ts, predictions, freq_minutes)
+    llm, llm_error = get_deepseek_llm()
+
     # 8. Insights Section
-    st.subheader("AI Analysis")
+    st.subheader("AI Analysis (DeepSeek)")
     if "insight_text" not in st.session_state:
         st.session_state["insight_text"] = ""
-        
+    if "chat_history" not in st.session_state:
+        st.session_state["chat_history"] = []
+
+    if llm_error:
+        st.caption(f"⚠️ {llm_error}")
+
     col_btn, col_txt = st.columns([1, 4])
     with col_btn:
-        if st.button("Generate Report", type="primary", use_container_width=True):
-            st.session_state["insight_text"] = generate_insights(snapshot, predictions, metric, horizon_hours)
+        if st.button("Summarize now + next 1h", type="primary", use_container_width=True):
+            st.session_state["insight_text"] = generate_insights(
+                current=snapshot,
+                forecast=predictions,
+                metric=metric,
+                horizon_hours=horizon_hours,
+                freq_minutes=freq_minutes,
+                future_ts=future_ts,
+                llm=llm,
+            )
     
     with col_txt:
         if st.session_state["insight_text"]:
             st.info(st.session_state["insight_text"])
         else:
-            st.markdown("*Click 'Generate Report' for an automated summary of air quality conditions.*")
+            st.markdown("*Click 'Summarize now + next 1h' for an automated summary of air quality conditions.*")
+
+    st.markdown("---")
+    st.subheader("Chat with your IAQ co-pilot")
+
+    if st.session_state["chat_history"]:
+        for turn in st.session_state["chat_history"]:
+            with st.chat_message(turn["role"]):
+                st.markdown(turn["content"])
+
+    user_question = st.chat_input("Ask about the current air quality or the next hour forecast")
+    if user_question:
+        st.session_state["chat_history"].append({"role": "user", "content": user_question})
+        with st.chat_message("user"):
+            st.markdown(user_question)
+        if llm:
+            try:
+                answer = deepseek_chat_reply(
+                    llm=llm,
+                    user_input=user_question,
+                    snapshot=snapshot,
+                    metric=metric,
+                    one_hour_point=one_hour_point,
+                    history=st.session_state["chat_history"],
+                    freq_minutes=freq_minutes,
+                )
+            except Exception as exc:
+                answer = f"DeepSeek chat failed: {exc}"
+        else:
+            answer = "DeepSeek not configured. Add DEEPSEEK_API_KEY to .env to enable chat."
+
+        st.session_state["chat_history"].append({"role": "assistant", "content": answer})
+        with st.chat_message("assistant"):
+            st.markdown(answer)
 
     # Raw Data
     with st.expander("View Raw Data"):

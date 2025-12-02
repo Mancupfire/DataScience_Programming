@@ -3,3 +3,5 @@ numpy
 streamlit
 plotly
 openai
+langchain-core
+langchain-deepseek
