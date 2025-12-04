@@ -5,3 +5,4 @@ plotly
 openai
 langchain-core
 langchain-deepseek
+python-dotenv

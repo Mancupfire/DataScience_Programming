@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 from datetime import timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -24,8 +27,20 @@ except Exception as exc:
     _bilstm_available = False
     _bilstm_error = str(exc)
 
+try:
+    from xgboost_adapter import load_xgboost_model, recursive_forecast, create_temporal_features
+    _xgboost_available = True
+    _xgboost_error = ""
+    # Load model once at startup if possible, or lazy load
+    XGB_MODEL_PATH = Path(__file__).parent / "Training Model" / "xgboost_model.json"
+    xgb_model = load_xgboost_model(XGB_MODEL_PATH) if XGB_MODEL_PATH.exists() else None
+except Exception as exc:
+    _xgboost_available = False
+    _xgboost_error = str(exc)
+    xgb_model = None
+
 # --- Constants & Config ---
-DATA_PATH = Path(__file__).parent / "cleaned_dataset.csv"
+DATA_PATH = Path(__file__).parent / "Training Model" / "cleaned_dataset.csv"
 DEFAULT_METRICS = ["PM2.5", "PM10", "CO2", "Temp", "Hum", "TVOC"]
 FORECAST_HOURS_CHOICES = [1, 3, 6, 12]
 
@@ -200,6 +215,37 @@ def compute_forecast(
             else:
                 note = "BiLSTM failed or returned None. Using Moving Average."
                 values = moving_average_forecast(df[metric], horizon, window=max(12, horizon // 2))
+    elif method == "XGBoost (Recursive)":
+        if not _xgboost_available or xgb_model is None:
+             note = f"XGBoost unavailable ({_xgboost_error} or model not found). Falling back to Moving Avg."
+             values = moving_average_forecast(df[metric], horizon, window=max(12, horizon // 2))
+        elif metric != "PM2.5":
+             note = "XGBoost model is trained for PM2.5 only. Using Moving Avg for other metrics."
+             values = moving_average_forecast(df[metric], horizon, window=max(12, horizon // 2))
+        else:
+            try:
+                # Prepare data for XGBoost
+                # We need enough history for lags (max 24h)
+                # Ensure we have the necessary columns
+                # The adapter handles feature creation, but we need to pass a dataframe with 'ts' index or similar
+                
+                # Make sure df has datetime index for the adapter
+                df_xgb = df.copy()
+                if 'ts' in df_xgb.columns:
+                    df_xgb = df_xgb.set_index('ts')
+                
+                # We need at least 24 hours of data
+                if len(df_xgb) < 24:
+                     note = "Not enough data for XGBoost lags (need 24h). Using Moving Avg."
+                     values = moving_average_forecast(df[metric], horizon, window=max(12, horizon // 2))
+                else:
+                    # Run recursive forecast
+                    values = recursive_forecast(xgb_model, df_xgb, horizon, target_col=metric)
+                    note = "XGBoost recursive forecast (xgboost.ipynb)."
+            except Exception as e:
+                note = f"XGBoost failed: {e}. Using Moving Avg."
+                values = moving_average_forecast(df[metric], horizon, window=max(12, horizon // 2))
+
     else:
         values = moving_average_forecast(df[metric], horizon, window=max(12, horizon // 2))
         note = "Moving-average regression (fast prototype)."
@@ -332,8 +378,192 @@ def deepseek_chat_reply(
 
 # --- Visualization Components ---
 
+def get_health_status(metric: str, value: float) -> Tuple[str, str, str]:
+    """
+    Returns (status_label, border_color, recommendation) based on WHO/EPA standards.
+    Colors: Green, Yellow, Orange, Red, Purple, Maroon.
+    """
+    # Defaults
+    status = "Good"
+    color = "#10b981" # Green
+    rec = "Air quality is satisfactory."
+
+    if metric == "PM2.5":
+        if value <= 12:
+            status, color, rec = "Good", "#10b981", "Air quality is satisfactory."
+        elif value <= 35.4:
+            status, color, rec = "Moderate", "#eab308", "Sensitive individuals should limit outdoor exertion."
+        elif value <= 55.4:
+            status, color, rec = "Unhealthy for SG", "#f97316", "Sensitive groups: reduce outdoor exertion."
+        elif value <= 150.4:
+            status, color, rec = "Unhealthy", "#ef4444", "Everyone: reduce prolonged outdoor exertion."
+        elif value <= 250.4:
+            status, color, rec = "Very Unhealthy", "#a855f7", "Avoid outdoor exertion. Wear a mask."
+        else:
+            status, color, rec = "Hazardous", "#881337", "Emergency conditions. Stay indoors."
+            
+    elif metric == "PM10":
+        if value <= 54:
+            status, color, rec = "Good", "#10b981", "Air quality is satisfactory."
+        elif value <= 154:
+            status, color, rec = "Moderate", "#eab308", "Sensitive individuals should limit outdoor exertion."
+        elif value <= 254:
+            status, color, rec = "Unhealthy for SG", "#f97316", "Sensitive groups: reduce outdoor exertion."
+        elif value <= 354:
+            status, color, rec = "Unhealthy", "#ef4444", "Everyone: reduce prolonged outdoor exertion."
+        elif value <= 424:
+            status, color, rec = "Very Unhealthy", "#a855f7", "Avoid outdoor exertion."
+        else:
+            status, color, rec = "Hazardous", "#881337", "Emergency conditions."
+
+    elif metric == "CO2":
+        if value <= 1000:
+            status, color, rec = "Good", "#10b981", "Air is fresh."
+        elif value <= 1500:
+            status, color, rec = "Fair", "#eab308", "Ventilation recommended."
+        elif value <= 2000:
+            status, color, rec = "Poor", "#f97316", "Open windows. Drowsiness likely."
+        else:
+            status, color, rec = "Bad", "#ef4444", "High CO2. Maximize ventilation immediately."
+
+    elif metric == "TVOC":
+        if value <= 300:
+            status, color, rec = "Good", "#10b981", "Clean air."
+        elif value <= 500:
+            status, color, rec = "Moderate", "#eab308", "Acceptable."
+        elif value <= 1000:
+            status, color, rec = "Marginal", "#f97316", "Ventilate room."
+        else:
+            status, color, rec = "High", "#ef4444", "Identify sources (chemicals, etc)."
+            
+    elif metric == "Temp":
+        if 18 <= value <= 26:
+            status, color, rec = "Comfortable", "#10b981", "Optimal temperature."
+        elif value < 18:
+            status, color, rec = "Cool", "#3b82f6", "Maybe turn up heat."
+        else:
+            status, color, rec = "Warm", "#f97316", "Maybe turn on AC/Fan."
+
+    elif metric == "Hum":
+        if 30 <= value <= 60:
+            status, color, rec = "Optimal", "#10b981", "Comfortable humidity."
+        elif value < 30:
+            status, color, rec = "Dry", "#eab308", "Use humidifier."
+        else:
+            status, color, rec = "Humid", "#eab308", "Use dehumidifier."
+
+    return status, color, rec
+
+def check_alerts(df: pd.DataFrame, snapshot: Dict[str, float]) -> List[str]:
+    """Generates alerts for critical thresholds and sudden spikes."""
+    alerts = []
+    
+    # 1. Threshold Alerts (Critical levels)
+    # PM2.5 > 150 (Unhealthy)
+    if snapshot.get("PM2.5", 0) > 150.4:
+        alerts.append("⚠️ **Critical Alert:** PM2.5 exceeds 150 µg/m³ (Unhealthy).")
+    
+    # CO2 > 1500 (Poor Ventilation)
+    if snapshot.get("CO2", 0) > 1500:
+        alerts.append("⚠️ **Comfort Warning:** CO2 > 1500 ppm. Poor ventilation detected.")
+        
+    # TVOC > 1000 (High)
+    if snapshot.get("TVOC", 0) > 1000:
+        alerts.append("⚠️ **Chemical Alert:** TVOC levels are very high (>1000 ppb).")
+
+    # 2. Sudden Spike Detection (e.g., >25% increase in last 10 mins)
+    # We need at least 10 mins of data
+    if len(df) > 2:
+        last_ts = df["ts"].max()
+        ten_mins_ago = last_ts - timedelta(minutes=10)
+        # Get data closest to 10 mins ago
+        # We look for a point within a small window around 10 mins ago
+        past_window = df[(df["ts"] >= ten_mins_ago - timedelta(minutes=2)) & 
+                         (df["ts"] <= ten_mins_ago + timedelta(minutes=2))]
+        
+        if not past_window.empty:
+            # Compare current vs average of that past window
+            # Check PM2.5 spike
+            current_pm = snapshot.get("PM2.5", 0)
+            past_pm = past_window["PM2.5"].mean()
+            
+            if past_pm > 5 and current_pm > past_pm * 1.25: # >25% increase and not noise (base > 5)
+                alerts.append(f"📈 **Sudden Spike:** PM2.5 increased by >25% in the last 10 minutes.")
+                
+            # Check CO2 spike
+            current_co2 = snapshot.get("CO2", 0)
+            past_co2 = past_window["CO2"].mean()
+             
+            if past_co2 > 400 and current_co2 > past_co2 * 1.25:
+                 alerts.append(f"📈 **Sudden Spike:** CO2 levels rising rapidly.")
+
+    return alerts
+
+def detect_events(df: pd.DataFrame, snapshot: Dict[str, float]) -> List[str]:
+    """
+    Detects events based on heuristics over the last 10 minutes.
+    - Cooking: PM2.5 spike (>10%) + CO2 spike (>5%)
+    - Crowding: CO2 spike (>10%) only
+    - Window Opening: CO2 drop (>10%) + Humidity drop (>5%)
+    - Cleaning: TVOC spike (>10%)
+    """
+    events = []
+    if len(df) < 3:
+        return events
+
+    last_ts = df["ts"].max()
+    ten_mins_ago = last_ts - timedelta(minutes=10)
+    
+    # Get baseline (approx 10 mins ago)
+    # We use a small window around 10 mins ago to be robust
+    past_window = df[(df["ts"] >= ten_mins_ago - timedelta(minutes=2)) & 
+                     (df["ts"] <= ten_mins_ago + timedelta(minutes=2))]
+    
+    if past_window.empty:
+        return events
+
+    # Current values
+    curr_pm = snapshot.get("PM2.5", 0)
+    curr_co2 = snapshot.get("CO2", 0)
+    curr_hum = snapshot.get("Hum", 0)
+    curr_tvoc = snapshot.get("TVOC", 0)
+
+    # Past averages
+    past_pm = past_window["PM2.5"].mean()
+    past_co2 = past_window["CO2"].mean()
+    past_hum = past_window["Hum"].mean()
+    past_tvoc = past_window["TVOC"].mean()
+
+    # Thresholds for "significant" change (avoid division by zero)
+    def pct_change(curr, past):
+        return (curr - past) / past if past > 1 else 0
+
+    pm_change = pct_change(curr_pm, past_pm)
+    co2_change = pct_change(curr_co2, past_co2)
+    hum_change = pct_change(curr_hum, past_hum)
+    tvoc_change = pct_change(curr_tvoc, past_tvoc)
+
+    # Heuristics
+    # 1. Cooking: PM2.5 > 10% AND CO2 > 5%
+    if pm_change > 0.10 and co2_change > 0.05:
+        events.append("🍳 **Cooking Detected** (PM2.5 & CO2 rising)")
+    
+    # 2. Crowding: CO2 > 10% (and not cooking)
+    elif co2_change > 0.10:
+        events.append("👥 **Crowding / Occupancy Increase** (CO2 rising)")
+
+    # 3. Window Opening: CO2 drop > 10% AND Hum drop > 5%
+    if co2_change < -0.10 and hum_change < -0.05:
+        events.append("🪟 **Window Likely Opened** (Fresh air influx)")
+
+    # 4. Cleaning: TVOC > 10%
+    if tvoc_change > 0.10:
+        events.append("🧹 **Cleaning / Chemical Use** (TVOC spike)")
+
+    return events
+
 def metric_cards(snapshot: Dict[str, float], df: pd.DataFrame, cols: List[str]) -> None:
-    """Displays metrics with delta indicators vs the last 1 hour average."""
+    """Displays metrics with delta indicators and health categories using custom HTML cards."""
     
     # Calculate 1-hour average for comparison
     if not df.empty:
@@ -343,33 +573,54 @@ def metric_cards(snapshot: Dict[str, float], df: pd.DataFrame, cols: List[str]) 
     else:
         recent_df = pd.DataFrame()
 
-    card_cols = st.columns(len(cols))
-    
-    for col_ui, name in zip(card_cols, cols):
-        value = snapshot.get(name, float("nan"))
+    # Create rows of 3 columns
+    for i in range(0, len(cols), 3):
+        batch_cols = cols[i:i+3]
+        ui_cols = st.columns(len(batch_cols))
         
-        # Determine Delta
-        delta_msg = None
-        delta_color = "normal"
-        
-        if not recent_df.empty and name in recent_df.columns:
-            avg_last_hour = recent_df[name].mean()
-            diff = value - avg_last_hour
-            delta_msg = f"{diff:+.1f} (1h trend)"
+        for col_ui, name in zip(ui_cols, batch_cols):
+            value = snapshot.get(name, float("nan"))
+            status, color, rec = get_health_status(name, value)
             
-            # Logic: For pollutants, Positive delta = Bad (Inverse)
-            if name in ["PM2.5", "PM10", "CO2", "TVOC"]:
-                delta_color = "inverse" 
-            # For Temp/Hum, depends on context, but let's keep normal for now
-            else:
-                delta_color = "normal"
+            # Determine Delta
+            delta_html = ""
+            if not recent_df.empty and name in recent_df.columns:
+                avg_last_hour = recent_df[name].mean()
+                diff = value - avg_last_hour
+                arrow = "↑" if diff > 0 else "↓"
+                delta_color = "#ef4444" if (name in ["PM2.5", "PM10", "CO2", "TVOC"] and diff > 0) else "#10b981"
+                # For temp/hum, neutral color for delta
+                if name in ["Temp", "Hum"]: delta_color = "#9ca3af"
+                
+                delta_html = f"<span style='color: {delta_color}; font-size: 0.9em;'>{arrow} {abs(diff):.1f} (1h)</span>"
 
-        col_ui.metric(
-            label=name, 
-            value=f"{value:.1f}", 
-            delta=delta_msg,
-            delta_color=delta_color
-        )
+            # Render HTML Card
+            card_html = f"""
+            <div style="
+                border: 2px solid {color};
+                border-radius: 12px;
+                padding: 16px;
+                background: rgba(255,255,255,0.03);
+                margin-bottom: 16px;
+            ">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <span style="color: #9ca3af; font-weight: 600; font-size: 0.9em;">{name}</span>
+                    <span style="background: {color}20; color: {color}; padding: 2px 8px; border-radius: 99px; font-size: 0.75em; font-weight: 700; border: 1px solid {color}40;">
+                        {status}
+                    </span>
+                </div>
+                <div style="font-size: 2em; font-weight: 700; margin-bottom: 4px;">
+                    {value:.1f}
+                </div>
+                <div style="margin-bottom: 12px;">
+                    {delta_html}
+                </div>
+                <div style="font-size: 0.85em; color: #d1d5db; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 8px;">
+                    {rec}
+                </div>
+            </div>
+            """
+            col_ui.markdown(card_html, unsafe_allow_html=True)
 
 def plot_dual_axis_trend(df: pd.DataFrame, metrics: List[str], timeframe_label: str) -> None:
     """Plots trends with CO2 on a secondary Y-axis to fix scaling issues."""
@@ -419,6 +670,67 @@ def plot_dual_axis_trend(df: pd.DataFrame, metrics: List[str], timeframe_label: 
     
     st.plotly_chart(fig, use_container_width=True)
 
+def plot_spider_chart(snapshot: Dict[str, float], metrics: List[str]) -> None:
+    """Plots a spider/radar chart of current metrics normalized to a 0-100 scale based on typical ranges."""
+    if not snapshot:
+        return
+
+    # Define typical max values for normalization (approximate "high" levels)
+    # This ensures the chart shape is meaningful even with different units
+    limits = {
+        "PM2.5": 100,   # ug/m3
+        "PM10": 150,    # ug/m3
+        "CO2": 2000,    # ppm
+        "Temp": 40,     # C
+        "Hum": 100,     # %
+        "TVOC": 500,    # ppb (assumed)
+    }
+
+    r_values = []
+    theta_values = []
+    
+    for m in metrics:
+        if m in snapshot:
+            val = snapshot[m]
+            limit = limits.get(m, max(val * 1.2, 1.0)) # Fallback to 1.2x value if unknown
+            normalized = min((val / limit) * 100, 100) # Cap at 100%
+            r_values.append(normalized)
+            theta_values.append(m)
+            
+    # Close the loop
+    if r_values:
+        r_values.append(r_values[0])
+        theta_values.append(theta_values[0])
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatterpolar(
+        r=r_values,
+        theta=theta_values,
+        fill='toself',
+        name='Current Status',
+        line_color='#2dd4bf'
+    ))
+
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(
+                visible=True,
+                range=[0, 100],
+                showticklabels=False
+            )
+        ),
+        showlegend=False,
+        title="Current Status Fingerprint",
+        height=350,
+        margin=dict(t=40, b=20, l=40, r=40),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#d1d5db")
+    )
+
+    return fig, r_values, theta_values, limits
+
+
 # --- Main App ---
 
 def main() -> None:
@@ -442,6 +754,9 @@ def main() -> None:
         if _bilstm_available and uploaded_file is None:
             # Only allow BiLSTM if using the default file (due to path dependency)
             method_options.append("BiLSTM (from notebook)")
+        
+        if _xgboost_available and xgb_model is not None:
+            method_options.append("XGBoost (Recursive)")
             
         method = st.radio(
             "Prediction model",
@@ -473,6 +788,20 @@ def main() -> None:
     with st.sidebar:
         st.caption(f"Data cadence: ~{freq_minutes:.1f} min | {len(df):,} rows")
 
+    # Alerts & Notifications
+    alerts = check_alerts(df, snapshot)
+    if alerts:
+        for alert in alerts:
+            st.error(alert, icon="🚨")
+
+    # Event Detection
+    events = detect_events(df, snapshot)
+    if events:
+        with st.container():
+            st.markdown("### 🧠 AI Event Detection")
+            for event in events:
+                st.info(event, icon="ℹ️")
+
     # Top Metric Cards
     st.subheader("Current Status")
     metric_cards(snapshot, df, available_metrics)
@@ -489,6 +818,44 @@ def main() -> None:
 
     # Trend Charts (Dual Axis)
     plot_dual_axis_trend(filtered, available_metrics, timeframe.lower())
+    
+    # Spider Chart with Interpretation
+    st.subheader("Multi-Metric Overview")
+    col_chart, col_interp = st.columns([2, 1])
+    
+    with col_chart:
+        fig, r_vals, theta_vals, limits = plot_spider_chart(snapshot, available_metrics)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
+    
+    with col_interp:
+        st.markdown("#### 📖 How to Read This Chart")
+        st.markdown("""
+        **Shape Meaning:**
+        - **Smaller shape** = Better air quality (closer to center)
+        - **Larger shape** = Higher pollution levels
+        
+        **Scale:**  
+        Each axis is normalized to 0-100% of a typical "high" value.
+        """)
+        
+        # Identify the highest concern
+        if r_vals and theta_vals:
+            # Exclude the closing duplicate point
+            actual_r = r_vals[:-1] if len(r_vals) > len(available_metrics) else r_vals
+            actual_theta = theta_vals[:-1] if len(theta_vals) > len(available_metrics) else theta_vals
+            
+            if actual_r:
+                max_idx = actual_r.index(max(actual_r))
+                worst_metric = actual_theta[max_idx]
+                worst_pct = actual_r[max_idx]
+                
+                if worst_pct > 70:
+                    st.warning(f"⚠️ **Main Concern:** {worst_metric} is at {worst_pct:.0f}% of its limit.")
+                elif worst_pct > 40:
+                    st.info(f"ℹ️ **Watch:** {worst_metric} is elevated ({worst_pct:.0f}%).")
+                else:
+                    st.success("✅ All metrics are within comfortable ranges.")
 
     # Forecasting
     st.subheader(f"Forecast for {metric} (next {horizon_hours}h)")
