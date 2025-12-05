@@ -28,16 +28,16 @@ except Exception as exc:
     _bilstm_error = str(exc)
 
 try:
-    from xgboost_adapter import load_xgboost_model, recursive_forecast, create_temporal_features
-    _xgboost_available = True
-    _xgboost_error = ""
+    from lightgbm_adapter import load_lightgbm_model, recursive_forecast, create_temporal_features
+    _lightgbm_available = True
+    _lightgbm_error = ""
     # Load model once at startup if possible, or lazy load
-    XGB_MODEL_PATH = Path(__file__).parent / "Training Model" / "xgboost_model.json"
-    xgb_model = load_xgboost_model(XGB_MODEL_PATH) if XGB_MODEL_PATH.exists() else None
+    LGBM_MODEL_PATH = Path(__file__).parent / "Training Model" / "lightgbm_model.txt"
+    lgbm_model = load_lightgbm_model(LGBM_MODEL_PATH) if LGBM_MODEL_PATH.exists() else None
 except Exception as exc:
-    _xgboost_available = False
-    _xgboost_error = str(exc)
-    xgb_model = None
+    _lightgbm_available = False
+    _lightgbm_error = str(exc)
+    lgbm_model = None
 
 # --- Constants & Config ---
 DATA_PATH = Path(__file__).parent / "Training Model" / "cleaned_dataset.csv"
@@ -215,35 +215,39 @@ def compute_forecast(
             else:
                 note = "BiLSTM failed or returned None. Using Moving Average."
                 values = moving_average_forecast(df[metric], horizon, window=max(12, horizon // 2))
-    elif method == "XGBoost (Recursive)":
-        if not _xgboost_available or xgb_model is None:
-             note = f"XGBoost unavailable ({_xgboost_error} or model not found). Falling back to Moving Avg."
+    elif method == "LightGBM (Recursive)":
+        if not _lightgbm_available or lgbm_model is None:
+             note = f"LightGBM unavailable ({_lightgbm_error} or model not found). Falling back to Moving Avg."
              values = moving_average_forecast(df[metric], horizon, window=max(12, horizon // 2))
         elif metric != "PM2.5":
-             note = "XGBoost model is trained for PM2.5 only. Using Moving Avg for other metrics."
+             note = "LightGBM model is trained for PM2.5 only. Using Moving Avg for other metrics."
              values = moving_average_forecast(df[metric], horizon, window=max(12, horizon // 2))
         else:
             try:
-                # Prepare data for XGBoost
+                # Prepare data for LightGBM
                 # We need enough history for lags (max 24h)
                 # Ensure we have the necessary columns
                 # The adapter handles feature creation, but we need to pass a dataframe with 'ts' index or similar
                 
                 # Make sure df has datetime index for the adapter
-                df_xgb = df.copy()
-                if 'ts' in df_xgb.columns:
-                    df_xgb = df_xgb.set_index('ts')
+                df_lgbm = df.copy()
+                if 'ts' in df_lgbm.columns:
+                    df_lgbm = df_lgbm.set_index('ts')
                 
                 # We need at least 24 hours of data
-                if len(df_xgb) < 24:
-                     note = "Not enough data for XGBoost lags (need 24h). Using Moving Avg."
+                if len(df_lgbm) < 24:
+                     note = "Not enough data for LightGBM lags (need 24h). Using Moving Avg."
                      values = moving_average_forecast(df[metric], horizon, window=max(12, horizon // 2))
                 else:
-                    # Run recursive forecast
-                    values = recursive_forecast(xgb_model, df_xgb, horizon, target_col=metric)
-                    note = "XGBoost recursive forecast (xgboost.ipynb)."
+                    # Run recursive forecast (returns predictions at 5-min intervals)
+                    values = recursive_forecast(lgbm_model, df_lgbm, horizon, target_col=metric)
+                    # Fix: Generate timestamps at 5-min intervals to match prediction count
+                    steps_per_hour = 12  # 60 / 5 = 12 steps per hour
+                    total_steps = horizon * steps_per_hour
+                    future_ts = [last_ts + timedelta(minutes=5) * (i + 1) for i in range(total_steps)]
+                    note = "LightGBM recursive forecast (lightgbm.ipynb)."
             except Exception as e:
-                note = f"XGBoost failed: {e}. Using Moving Avg."
+                note = f"LightGBM failed: {e}. Using Moving Avg."
                 values = moving_average_forecast(df[metric], horizon, window=max(12, horizon // 2))
 
     else:
@@ -755,8 +759,8 @@ def main() -> None:
             # Only allow BiLSTM if using the default file (due to path dependency)
             method_options.append("BiLSTM (from notebook)")
         
-        if _xgboost_available and xgb_model is not None:
-            method_options.append("XGBoost (Recursive)")
+        if _lightgbm_available and lgbm_model is not None:
+            method_options.append("LightGBM (Recursive)")
             
         method = st.radio(
             "Prediction model",
