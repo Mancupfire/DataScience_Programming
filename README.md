@@ -1,4 +1,4 @@
-````markdown
+
 # 🫧 Indoor Air Quality Dashboard
 
 **Smart-IndoorCARE** is an intelligent dashboard for monitoring, visualizing, and forecasting Indoor Air Quality (IAQ).
@@ -18,7 +18,6 @@ This prototype leverages hybrid machine learning models (**LightGBM**, **BiLSTM*
 * **AI Co-Pilot:** Integrated chat interface (DeepSeek) to summarize conditions and answer user queries about air quality.
 * **Dual-Axis Visualization:** Compare CO2 levels against other metrics effectively.
 
----
 
 ## 📂 Project Structure
 
@@ -38,7 +37,6 @@ Smart-IndoorCARE/
     └── lightgbm_model.txt     # Pre-trained LightGBM model
 ````
 
------
 
 ## 🚀 Quick Start
 
