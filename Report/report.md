@@ -1,0 +1,242 @@
+# **1.  Introduction:**
+
+Air pollution has become one of the most pressing environmental health challenges in Vietnam, particularly in densely populated urban centres and traditional craft villages. These areas often experience elevated concentrations of CO₂, PM2.5, and other harmful pollutants due to a combination of traffic congestion, industrial emissions, and small-scale production activities that rely on outdated or asynchronous technologies (Nguyen, 2020). Hanoi, the nation’s capital, is especially vulnerable—its rapid economic growth, high population density, and reliance on private motor vehicles contribute significantly to deteriorating air quality (Vanderbloemen, 2025).
+
+The health burden associated with poor air quality is substantial. PM2.5, in particular, poses severe risks because its fine particles can penetrate deep into the lungs and enter the bloodstream, leading to respiratory infections, cardiovascular diseases, and long-term mortality (Chen, 2020). Recent surveys further indicate that residents in crowded districts of Hanoi consider air pollution the top environmental issue affecting their daily lives, with many reporting prolonged exposure to harmful particulate matter. This highlights an urgent public need for accessible, reliable tools that can help individuals understand and respond to indoor and outdoor air quality conditions.
+
+This project addresses these issues by developing a machine-learning–based air-quality prediction system combined with an interactive and user-friendly dashboard. The objective is to provide residents with reliable insights into pollution levels, and explore the potential for integration into broader smart-city and environmental-management.
+
+Regarding the lack of public air-quality datasets for Hanoi, our team selected a model dataset from Kaggle - the IAQ Baquba Hospital dataset – University of Diyala | Kaggle. It was collected as part of an indoor environmental monitoring study conducted by researchers at the University of Diyala, aiming to evaluate and model Indoor Air Quality (IAQ) inside hospital environments. The CSV file is structured as a time-series table, where each row corresponds to a recorded timestamp together with Pollutant and Air-Quality, Environmental, and Temporal features, showing a richness in multivariate features. This serves as our initial testing dataset, allowing us to develop and validate our model before applying it to real-world datasets from megacities and densely populated urban areas, in collaboration with environmental institutions.
+
+# **2. Data Science Questions:**
+
+> ### **Question 1 - Which factors best explain the composite Air Quality index?**
+
+## **1. Introduction** 
+
+In modern Building Management Systems (BMS), the "Air Quality" metric is often a composite score - a single number derived from a weighted aggregation of various pollutants to simplify communication with building occupants. However, understanding which underlying factors drive this score is essential for remediation. If the Air Quality index drops, facility managers need to know whether to increase fresh air intake (to dilute CO<sub>2</sub>) or upgrade filtration (to capture PM2.5).
+
+In this project, our team aims to identify which factors best explain the variance in the Air Quality target variable found in the Baqubah Teaching Hospital dataset. To do this, we employ advanced machine learning techniques, specifically Gradient Boosting Machines (GBM) and Recurrent Neural Networks (RNN). These models have the capacity to map complex, non-linear relationships and, in the case of tree-based models, provide explicit "Feature Importance" rankings.
+
+The dataset features utilized here are the full spectrum of environmental readings: CO<sub>2</sub>, TVOC, PM10, PM2.5, CO, O<sub>3</sub>, Temp, Hum, and LDR. The target variable is the Air Quality column.
+
+## **2. Approach** 
+
+Coming up with the raw data, we noticed that there are missing values, potential timestamps misalignments. In order to bring this data into more insightful information, we conducted a cleaning process on this raw dataset. First, we check for missing values in the datasets, and drop them if the missing percentage > 50%. Also, the timestamp is converted into datetime, resampling to 5 minutes to reduce noise when modelling. Once again, we check for missing values after resample and notice all of the columns return missing values. Dealing with continuous variables like temperature and $CO_2$, we applied linear interpolation, which will approximate environmental variables over short time scales following the straight line . For edge cases at the beginning or end of the series, forward-filling (ffill) and backward-filling (bfill) are used to ensure the dataset is complete and rectangular, a prerequisite for correlation matrix correlation.
+
+
+To answer the research question, a multi-faceted modeling approach was employed, leveraging both traditional machine learning and deep learning techniques. The choice of methods allows for a comparison between interpretability and predictive power.
+
+### **Methods**
+
+1. Feature Seledtion & Engineering:
+- Correlation Analysis: Initial checks (e.g., in the CatBoost notebook) were performed to identify highly correlated features. For instance, eCO2 was dropped in some models due to its high correlation with CO2, preventing multicollinearity issues.
+- Temporal Features: Given the time-series nature of the data, features such as hour, day_of_week, month, and is_weekend were extracted. Additionally, lag features (values from previous time steps) and rolling statistics (mean, std, min, max) were created to capture temporal dependencies.
+
+2. Machine Learning Models:
+- XGBoost (Extreme Gradient Boosting): Selected for its efficiency, scalability, and built-in handling of missing values. It is particularly effective for structured/tabular data and provides feature importance scores.
+- LightGBM (Light Gradient Boosting Machine): Chosen for its speed and ability to handle large datasets with lower memory usage. It uses a leaf-wise growth strategy which often results in better accuracy.
+- CatBoost: Utilized for its superior handling of categorical features (though less relevant here) and robust performance with default parameters. It provides another perspective on feature importance.
+
+3. Deep Learning Models:
+- LSTM (Long Short-Term Memory): A type of Recurrent Neural Network (RNN) specifically designed for sequence prediction problems. It was chosen to model the long-term temporal dependencies in air quality data.
+- GRU (Gated Recurrent Unit): A simplified variant of LSTM that is computationally more efficient while often achieving similar performance.
+
+### **Visualisations**
+- Actual vs. Predicted Plots: Time-series line plots and scatter plots were used to visually assess the model's tracking of air quality trends and identify bias.
+- Feature Importance Plots: Bar charts from tree-based models (XGBoost, LightGBM, CatBoost) are crucial for directly answering the research question by ranking features based on their contribution to the model's predictive performance.
+
+<div style="display: flex; justify-content: space-between;">
+
+  <figure style="text-align: center;">
+    <img src="xgboost_fi.png" width="320">
+    <figcaption><b>XGBoost Feature Importance</b></figcaption>
+  </figure>
+
+  <figure style="text-align: center;">
+    <img src="catboost_fi.png" width="320">
+    <figcaption><b>CatBoost Feature Importance</b></figcaption>
+  </figure>
+
+  <figure style="text-align: center;">
+    <img src="lightgbm_fi.png" width="320">
+    <figcaption><b>LightGBM Feature Importance</b></figcaption>
+  </figure>
+
+</div>
+
+
+**Interpret the results**
+
+- PM2.5 / PM10: Consistently the top features by "Gain". The composite Air Quality index is almost certainly defined by a formula where PM is the dominant term (e.g., US EPA AQI standards).
+
+- LDR: The second-tier feature in both XGBoost and LightGBM. In indoor environments such as a hospital, LDR effectively captures time-of-day and occupancy patterns, both of which correlate strongly with fluctuations in airborne particulate levels.
+
+- Temp/Hum: These appear with lower importance scores. While they modulate the gases, they are not the primary constituents of the AQI formula itself.
+
+### **3. Analysis**
+These models were evaluated on a test set using 5 key metrics: RMSE, MSE, MAE, R2, MAPE.
+
+
+<div align="center">
+
+| Model | RMSE     | MSE        | MAE     | R²      | MAPE   |
+|-----------|----------|------------|---------|---------|--------|
+| XGBoost   | 18.2278  | 332.2516   | 13.8735 | 0.7427  | 0.1433 |
+| LightGBM  | 18.1329  | 328.8023   | 13.8132 | 0.7454  | 0.1427 |
+| CatBoost  | 18.1812  | 330.5568   | 13.8369 | 0.7440  | 0.1430 |
+| LSTM      | 18.3300  | 335.9903   | 13.9628 | 0.7398  | 0.1442 |
+| GRU       | 18.9530  | 359.2146   | 14.4553 | 0.7219  | 0.1493 |
+
+<p align="center"><b>Table 1: Comparative Metrics (Test Set)</b></p>
+
+</div>
+
+
+
+**3.1. The Efficacy of Explicit Temporal Engineering**
+
+The empirical results indicate a fundamental insight into the nature of the dataset: the temporal dependencies in indoor air quality are best captured through explicit feature engineering rather than implicit sequence learning.
+
+- Validation of Lag Features: The ensemble tree models (LightGBM, CatBoost, XGBoost) were trained on "tabularized" data containing explicit lag variables (e.g., $t-1$, $t-6$). Their superior performance (LightGBM $R^2 \approx 0.745$) compared to the Recurrent Neural Networks (LSTM/GRU) suggests that the historical context required to predict PM2.5 is short-term and deterministic. The model does not need to maintain a complex internal "memory" state (as RNNs do) to track long-term dependencies; simply knowing the pollution levels from the previous few hours is sufficient.
+- Model Suitability: The structural simplicity of gradient boosting proved more robust than the complex architecture of Deep Learning. The Deep Sequence models (particularly GRU) struggled to outperform the tree-based baselines, likely due to the noise inherent in sensor data, which can disrupt the gradient flow in recurrent networks more than it affects the leaf-splitting logic of decision trees.
+
+**3.2. Identifying the Key Factors**
+
+Since LightGBM demonstrated the highest fidelity to the ground truth, its feature importance ranking provides the most credible answer to our research question regarding which factors explain the composite index.
+
+- Primary Driver - Coarse Particulate Matter (PM10): Feature analysis definitively identifies PM10 as the strongest predictor. The physical correlation is evident: conditions that elevate coarse dust (PM10) almost invariably elevate fine dust (PM2.5).
+- Secondary Driver - Combustion Indicators (CO): Carbon Monoxide levels emerged as the second most critical explanatory factor. This distinguishes the source of pollution; it is not merely dust (which might only raise PM10), but likely exhaust-based pollution (vehicles or generators) which emits both CO and PM2.5 simultaneously.
+- The Role of "Inertia": The high predictive power of the Lag Features confirms that Air Quality has high inertia. The current state is heavily conditioned by the immediate past state, meaning the "factor" explaining current air quality is often just the "persistence of pollution."
+
+## **4. Discussion**
+	
+By implementing these models, we got these conclusions:
+- The resulting dependence on PM10 and Lagged PM2.5 values indicates that air quality is driven by persistent particulate accumulation rather than sudden, random fluctuations.
+- When discovering the key factors, we noticed the high importance of CO points is likely the root cause of pollution in the hospital.
+
+To further research, we’d like to suggest that we should focus on PM10 and CO sensors as these provide the strongest explanatory analysis for the overall Air Quality Index, or improve the prediction of extreme peak events by collecting more data on specific local emission events.
+
+
+> ### **Question 2: Given current indoor sensor readings (CO<sub>2</sub>, TVOC, PM10, CO, O<sub>3</sub>, temperature, humidity, LDR, ...), what is the corresponding PPM2.5 concentration at the specific time?**
+
+> ### **Question 3: For short-term prediction of indoor PM2.5, do deep sequence models (GRU/LSTM) significantly outperform gradient boosting models (XGBoost, LightGBM, CatBoost) in terms of RMSE/MAE/R<sup>2</sup>?**
+
+**1. Introduction**
+
+Deep sequence models such as LSTM and GRU are widely recognised for their strong performance in modelling complex temporal dependencies, and have been reported to outperform traditional machine learning models in many long-horizon sequence prediction tasks. However, in practical real-time air quality monitoring systems, model performance must be evaluated not only in terms of prediction accuracy, but also in terms of computational complexity, latency, and deployment cost.
+
+For short-term PM2.5 forecasting, where the dominant information is often captured by recent observations and short-range autocorrelation, it remains an open question whether the additional modelling capacity of deep learning models can translate into meaningful performance gains over lightweight gradient boosting models. Furthermore, the trade-off between model accuracy and computational efficiency becomes a critical consideration for real-world indoor air quality applications.
+
+This question therefore aims to rigorously evaluate whether deep sequence models (LSTM and GRU) truly outperform gradient boosting approaches (XGBoost, LightGBM, and CatBoost) for short-term PM2.5 prediction, under realistic deployment constraints.
+
+**2. Approach**
+
+To answer the research question, we implement a comparative analysis framework:
+
+
+
+**2.1. Forecasting Setup (Short-term Emphasis)**
+
+The prediction task is defined as a short-term regression problem aimed at immediate actionable insights, such as triggering air purification systems or alerting occupants.
+
+- Target: PM2.5 concentration at time $t+1$ (1-hour ahead horizon).
+
+- Input Features: Current and historical sensor readings (CO2, TVOC, Temp, Humidity) and lagged values of the target variable ($PM2.5_{t}, PM2.5_{t-1}, \dots$).
+
+→ This task aims to reflect real-time operational constraints where immediate accuracy is prioritized over long-horizon trend estimation.
+
+**2.2. Models Under Comparison**
+The study contrasts two distinct modeling paradigms:
+
+- Gradient Boosting Models (XGBoost, LightGBM, CatBoost): Selected for their efficiency in handling tabular data, robustness to outliers, and fast inference speeds. These represent the "Lightweight" deployment tier.
+
+- Deep Sequence Models (LSTM, GRU): Selected for their architectural capacity to maintain internal state (memory), theoretically allowing them to capture non-linear temporal dynamics that feature-engineered regression might miss. These represent the "High-capacity" tier.
+
+**2.3. Comparison Protocol**
+
+To ensure validity, all models were evaluated under identical conditions:
+
+- Data Split: We split the dataset into 80% of them for training, the remaining used for testing.
+
+- Feature Engineering: Consistent lag generation and rolling statistics were applied to GBMs to provide them with temporal context comparable to the sequence input of RNNs.
+- Normalization: MinMaxScaler was applied to inputs for Deep Learning models to facilitate convergence, while tree-based models utilized raw or appropriately encoded data.
+- Metrics: We use relevant metrics to quantify performance of such models, using RMSE (Root Mean Square Error) to penalize large deviations, MAE (Mean Absolute Error) for interpretability, $R^2$ for explained variance, and MAPE for relative error.
+
+**2.4. Deployment-related Evaluation**
+Beyond accuracy, the models are evaluated on practical deployability criteria, including training duration and computational complexity required for inference. This holistic view ensures the selected model fits the resource constraints of edge devices or real-time dashboards.
+
+
+**3. Analysis**
+
+After training model, we compared the test-set performance of the ensemble tree models against the recurrent neural networks, results in the following table:
+
+<div align="center">
+
+| **Model**   | **RMSE**   | **MSE**     | **MAE**    | **R²**    | **MAPE**   |
+|:-----------:|:----------:|:-----------:|:----------:|:---------:|:----------:|
+| XGBoost     | 18.2278    | 332.2516    | 13.8735    | 0.7427    | 0.1433     |
+| LightGBM    | 18.1329    | 328.8023    | 13.8132    | 0.7454    | 0.1427     |
+| CatBoost    | 18.1812    | 330.5568    | 13.8369    | 0.7440    | 0.1430     |
+| LSTM        | 18.3300    | 335.9903    | 13.9628    | 0.7398    | 0.1442     |
+| GRU         | 18.9530    | 359.2146    | 14.4553    | 0.7219    | 0.1493     |
+</div>
+
+<div align="center"><b>Table 1: Comparative Metrics (Test Set)</b></div>
+
+
+**3.1 Predictive accuracy**
+
+The indicated table reveals that Deep Sequence models did not significantly outperform Gradient Boosting models for the short-term (1-hour ahead) prediction horizon.
+
+- Best Performer: The LightGBM model achieved the highest predictive accuracy across all metrics, recording the lowest RMSE (18.13) and the highest Coefficient of Determination ($R^2 = 0.7454$). This suggests that LightGBM explains approximately 74.5% of the variance in the indoor PM2.5 data.
+
+- Model Comparison (GBM vs. DL):
+    + The best Gradient Boosting model (LightGBM) outperformed the best Deep Sequence model (LSTM).
+    + Specifically, LightGBM reduced the RMSE by 0.20 units and improved the $R^2$ by 0.0056 compared to LSTM. While the margin is narrow, it indicates that the additional computational complexity of the LSTM architecture did not translate into better accuracy for this specific dataset.
+    + The GRU model performed the worst among all candidates, with a significantly higher RMSE (18.95) and lower $R^2$ (0.7219), suggesting it struggled to capture the relevant dependencies as effectively as the tree-based ensembles.
+- Error Magnitude: The MAPE (Mean Absolute Percentage Error) for LightGBM was 14.27%, which is slightly better than the LSTM's 14.42%. This confirms that the tree-based models were more robust in minimizing relative errors across the testing horizon.
+
+**3.2 Computational Efficiency**
+
+- Training Time: Gradient Boosting models trained in seconds to minutes. In contrast, the LSTM and GRU models required significantly longer training times (epochs) to converge.
+- Inference Latency: For real-time applications, tree-based models offer millisecond-level inference latencies on standard CPUs. Deep sequence models incur higher computational overhead due to sequential matrix multiplications, often necessitating GPUs for comparable throughput.
+
+$\Rightarrow$ Deep learning models incur substantially higher computational costs without delivering proportional gains in short-term forecasting accuracy.
+
+**4. Discussion**
+
+Through the analysis above, we finalized to the answer of this question such that for short-term indoor PM2.5 forecasting with this dataset, Deep Sequence models do not offer a significant performance advantage over Gradient Boosting models. Indoor air quality, while sequential, is often heavily dependent on the immediate previous states (autocorrelation) and concurrent environmental factors (Temperature/Humidity). GBMs are highly efficient at exploiting these direct relationships. The “long-term memory” advantage of LSTMs is less critical for short-term horizons where the context window is narrow.
+
+In terms of limitation, Deep Learning typically outperforms trees when we investigate the extensions of forecasting horizons (e.g., 24 hours ahead). Also, if the dataset were expanded to years of data across varying environments, the conclusion might shift in favor of DL.
+
+Finally, although deep sequence models are theoretically more expressive, they do not provide a significant advantage over gradient boosting models for short-term PM2.5 forecasting on this dataset. Given the marginal accuracy difference and the substantially higher computational cost of LSTM and GRU, LightGBM emerges as the most practical choice, offering the optimal balance of high accuracy, interpretability, and efficiency for the production pipeline.
+
+
+# **3. Conclusion**
+
+# **4. Lifecycle Reflection:**
+
+Throughout this project, our team consistently followed the Data Science Life Cycle to ensure that each stage contributed meaningfully to the development of a reliable air-quality prediction system.
+
+In the problem identification and business understanding phase, we first examined the environmental and public-health concerns associated with PM2.5 and CO₂ exposure in densely populated and craft-village regions. From this, our project has a clear vision: developing a predictive tool and dashboard that would help local residents better monitor air-quality conditions and make informed decisions based on predicted pollution levels. This foundation guided all subsequent phases and ensured that the technical work aligned with a socially relevant need.
+
+After considering the dataset, we choose to go with a dataset on Kaggle with various air quality features. This dataset performs outdoor air quality index, very compatible for our project. The timestamp is up-to-date from 2024, ensuring not an out-dated model.
+
+In the data processing phase, we applied cleaning procedures such as handling missing values, removing duplicates, checking the correlation of CO2, dropping if the correlation higher than 0.9, otherwise interpolating. Dropping columns with more than half missing is necessary. We also create new time-series features, especially creating a 5 minute gap between each data.
+
+We visualize univariate and bivariate to learn the pattern between features like PM2.5 and PM10, CO2 and Temp to notify any relationship. Lineplots of CO2 and PM are presented to analyze the hourly average concentration. We also classify particulate matter into hours and days, and other advanced EDA techniques such as coefficient of features with PM2.5, heatmap of concentration by hour and day of week, and multivariate analysis, specifically with three most concerning factors: CO2, PM2.5 and PM10.
+
+
+# **5. Team Contribution Statement**
+
+# **6. Individual Reflections**
+
+# **7. References**
+1. Haider Qasim Faleh, Jumana Waleed Salih, Amer M. Ibrahim (2025), IAQ Baquba Hospital dataset – University of Diyala | Kaggle
+2. Vanderbloemen, L., Liamputtong, P., Nguyen, O. T. K., Hoang, K. V. N., Huynh, H. X., Hoang, M. P., Tran, M. G., Nguyen, P. H., Pham, T. N. H., Kapil, D., Elgebaly, A., & Taylor-Robinson, A. W. (2025). Hanoi Air Quantitative Report: A Cross-Sectional Study of Knowledge, Awareness, and Sustainable Practices Related to Air Pollution Among Residents of Hanoi, Vietnam. Sustainability, 17(14), 6557.
+https://doi.org/10.3390/su17146557
+3. Chen, J.; Hoek, G. Long-term exposure to PM and all-cause and cause-specific mortality: A systematic review and meta-analysis. Environ. Int. 2020, 143, 105974
+4. Nguyen, T.L. (2020) Environmental pollution in Vietnam’s craft villages E3S Web of Conferences, InterAGRO-MASH 2020, 35, 06012. 	https://doi.org/10.1051/e3sconf/202017506012
+
+# **8. Appendix**
