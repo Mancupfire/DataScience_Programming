@@ -1,7 +1,7 @@
 ````markdown
 # 🫧 Indoor Air Quality Dashboard
 
-**V-IndoorCARE** is an intelligent dashboard for monitoring, visualizing, and forecasting Indoor Air Quality (IAQ).
+**Smart-IndoorCARE** is an intelligent dashboard for monitoring, visualizing, and forecasting Indoor Air Quality (IAQ).
 
 This prototype leverages hybrid machine learning models (**LightGBM**, **BiLSTM**) to predict air quality trends (PM2.5, CO2, etc.) and integrates a Generative AI assistant (**DeepSeek/OpenAI**) to provide real-time, actionable health recommendations based on current environmental conditions.
 
