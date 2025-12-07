@@ -1,0 +1,476 @@
+<div align="center">
+
+
+![VinUni](vinuni.png)
+
+
+</div>
+
+
+<div align="center">
+
+<span style="color:#8B0000; font-weight:bold; font-size:28px;">
+College of Engineering and Computer Science
+</span>
+
+<br><br>
+
+**DATA2010 – Data Science Programming**  
+**Project Report**
+
+<br>
+
+### **Group 5**
+
+**Nguyen Hoang Nam – V202401647**  
+**Nguyen Tran Nhat Minh – V202401536**  
+**Nguyen Anh Duc – V202401631**  
+**Do Quang Thai An – V202401422**  
+**Vu Duc Thanh – V202401636**
+
+<br><br>
+
+**December 7<sup>th</sup>, 2025**
+
+</div>
+
+<div style="page-break-after: always;"></div>
+
+
+# **1.  Introduction:**
+
+&emsp; In Viet Nam, air pollution has become one of the most pressing environmental health challenges, especially in densely populated urban centres and traditional craft villages. These areas often have elevated concentrations of CO₂, PM2.5, and other harmful pollutants as well due to a combination of traffic congestion, and small-scale production activities that rely on outdated or asynchronous technologies (Nguyen, 2020). Hanoi, the capital, is especially vulnerable - its rapid economic growth, high population density, and reliance on gasoline motorbikes contribute significantly to deteriorating air quality (Vanderbloemen, 2025).
+
+&emsp; The health diseases which are associated with poor air quality are substantial. PM2.5 creates severe risks because its fine particles can penetrate deep into the lungs and enter the bloodstream, leading to respiratory infections, cardiovascular diseases, and long-term mortality (Chen, 2020). Recent research shows that people who live in crowded areas of Hanoi think air pollution is the biggest environmental problem affecting their everyday life. Many of them said they were exposed to dangerous particles for lengthy periods of time. This clearly shows there are urgent need for solutions that are easy to use and dependable that can help people understand and respond to the quality of air inside and outside.
+
+&emsp; To solve these problems, our project is building an air-quality prediction system based on machine learning and an interactive, easy-to-use dashboard. The goal is to give inhabitants accurate information about pollution levels and look into the possibility of integrating it into larger smart-city and environmental-management systems.
+
+&emsp; Regarding the lack of public air-quality datasets for Hanoi, our team selected a model dataset from Kaggle - the IAQ Baquba Hospital dataset – University of Diyala | Kaggle. It was collected as part of an indoor environmental monitoring study conducted by researchers at the University of Diyala, aiming to evaluate and model Indoor Air Quality (IAQ) inside hospital environments. The CSV file is structured as a time-series table, where each row corresponds to a recorded timestamp together with Pollutant and Air-Quality, Environmental, and Temporal features, showing a richness in multivariate features. This serves as our initial testing dataset, allowing us to develop and validate our model before applying it to real-world datasets from megacities and densely populated urban areas, in collaboration with environmental institutions.
+
+# **2. Data Science Questions:**
+
+> ### **Question 1 - Which environmental variables most strongly predict the variability of indoor PM2.5 concentration?**
+
+## **1. Introduction** 
+
+&emsp; Fine particulate matter (PM2.5) is arguably the most important metric for Indoor Air Quality (IAQ) due to its capacity to penetrate the respiratory system and trigger severe cardiovascular and respiratory diseases. In sensitive environments like the Baqubah Teaching Hospital, or right in our city: Ha Noi, managing these particles is critical for occupant safety.
+
+&emsp; Indoor PM2.5 concentrations are not random; they are governed by a complex interplay of coarser dust (PM10), combustion gases (CO), and environmental conditions such as ventilation and humidity. Therefore, effective control requires more than just forecasting pollution levels - it requires understanding the physical sources behind them.
+
+&emsp; Therefore, the scientific problem addressed here extends beyond merely predicting whether PM2.5 levels will be "high" or "low." . Instead of simply asking "What will the PM2.5 level be?", we investigate: "Which variables act as the primary physical drivers of PM2.5?"
+
+&emsp; This question helps our team to identify and explain the dominant environmental drivers governing the variability of indoor PM2.5 concentrations, distinguishing between immediate pollution sources and temporal accumulation effects.
+
+
+## **2. Approach** 
+
+&emsp;Coming up with the raw data, we noticed that there are missing values, potential timestamps misalignments. In order to bring this data into more insightful information, we conducted a cleaning process on this raw dataset. First, we check for missing values in the datasets, and drop them if the missing percentage > 50%. Also, the timestamp is converted into datetime, resampling to 5 minutes to reduce noise when modelling. Once again, we check for missing values after resample and notice all of the columns return missing values. Dealing with continuous variables like temperature and CO2, we applied linear interpolation, which will approximate environmental variables over short time scales following the straight line . For edge cases at the beginning or end of the series, forward-filling (ffill) and backward-filling (bfill) are used to ensure the dataset is complete, a prerequisite for correlation matrix correlation.
+
+&emsp;Then, to address the research question, we adopted a methodology prioritized for interpretability and feature explanation rather than solely optimizing predictive accuracy.
+
+
+**2.1 Feature Selection & Preprocessing**
+
+Data preprocessing was designed to isolate independent drivers and capture temporal dynamics. Recognizing the time-series nature of IAQ, we engineered features to distinguish between immediate impacts and accumulation effects:
+- Cyclical markers: hour, day_of_week, is_weekend were extracted to capture human activity patterns.
+- Lag Features: Lagged variables (e.g., PM2.5_lag_1) were utilized to measure pollution inertia.
+- Rolling Statistics: Rolling means and standard deviations were calculated to smooth noise and highlight trends.
+
+**2.2 Choice of Interpretable Models**
+
+We selected LightGBM as the primary model, with XGBoost and CatBoost as validation benchmarks.
+- The reason why we choose: Unlike Deep Learning models (LSTM/GRU), these gradient boosting decision tree (GBDT) algorithms offer native support for calculating feature importance (Gain/Split).
+
+**2.3 Visualisation Strategy**
+
+We used correlation matrix heatmap, feature importance bar and SHAP beeswarm plot as with these GBDT models, this allows us to produce native model outputs, guiding us in finding a key driver of PM2.5 concentration in such places.
+
+
+## **3. Analysis**
+
+**3.1 Correlation Results**
+
+<div align="center">
+
+
+![Correlation Heatmap](correlation_heatmap.png)
+
+Figure 1. Correlation Heatmap
+
+</div>
+
+The correlation analysis shows that environmental variables are clearly and physically related to each other. PM10 has the largest positive correlation with PM2.5 ($r > 0.7$), which is what we would expect because PM2.5 is a fine-particle subset of PM10. In the hospital setting, the two pollutants fluctuate practically simultaneously, indicating a common predominant source, potentially dust resuspension or outdoor particle penetration. Carbon monoxide (CO) has a moderate positive correlation with PM2.5, which means that activities that cause combustion, like driving cars or using backup generators, may be to blame for the pollution increases that are seen. On the other hand, meteorological factors like temperature and humidity have significantly lower or even negative associations with PM2.5. This means that while they affect how particles behave, they are not the main causes of fine particulate concentration in this indoor setting.
+
+**3.2 Feature Importance**
+
+<div align="center">
+
+
+![LightGBM Feature Importance](lightgbm_fi.png)
+
+Figure 2. Feature Importance Plot
+
+</div>
+
+By analyzing Feature Importance scores from the selected  model (LightGBM), we identified the primary physical drivers governing PM2.5 concentrations.
+- **PM10**
+    + **Observation:** PM10 consistently ranked as the most influential predictor across all tree-based models.
+    + **Physical Interpretation:** PM2.5 (fine particles) is a physical subset of PM10 (inhalable particles). The strong linear correlation indicates that pollution events in the hospital are mixed-mode, likely involving the resuspension of dust or intrusion of outdoor air, which elevates both coarse and fine particulate matter simultaneously.
+- Lag Features (The "Inertia" of Pollution)
+    + **Observation:** Lagged variables (e.g., PM2.5_lag_1, PM2.5_rolling_mean) were critical for model accuracy.
+    + **Physical Interpretation:** This quantifies the persistence of indoor pollution. High importance on these features indicates that the indoor environment has a slow air exchange rate. If pollution is high at time $t$, it is statistically probable to remain high at $t+1$ because the ventilation system does not instantly flush the contaminants.
+- **Environmental Modifiers**
+    + **Observation:** Time-of-day (Hour) and Temperature had lower importance scores compared to pollutants.
+    + **Physical Interpretation:** These act as modifiers rather than root causes. Hour captures human activity cycles (cleaning, visiting hours), while thermodynamic conditions may slightly affect particle suspension, but they do not generate pollution themselves.
+
+**3.3 SHAP Beeswarm**
+
+<div align="center">
+
+
+![SHAP Beeswarm](SHAP.png)
+
+Figure 3. SHAP Beeswarm Plot
+
+</div>
+
+
+In the SHAP beeswarm plot, each point represents one observation, the horizontal axis indicates how a feature pushes the PM2.5 prediction up (right) or down (left), and the color reflects the feature value (red = high, blue = low). Features are ranked by overall importance from top to bottom. The results show that lagged and rolling PM2.5 features dominate the prediction, confirming a strong pollution accumulation (inertia) effect in the indoor environment: higher recent PM2.5 consistently drives current PM2.5 upward. Among external drivers, PM10_lag_1 is the most influential non-PM2.5 feature, indicating a strong coupling between coarse and fine particles, likely due to shared emission sources and resuspension. In contrast, CO₂, TVOC, hour, and month exhibit relatively small impacts, suggesting that human activity proxies and temporal seasonality only modulate the baseline rather than acting as primary drivers. Overall, indoor PM2.5 dynamics are governed by a combination of short-term source effects (PM10) and persistent accumulation effects (lagged PM2.5).
+
+
+## **4. Discussion**
+	
+**4.1 Physical Interpretation: Resuspension over Combustion**
+
+Our analysis shows that there is a distinct pollution profile for the Baqubah Teaching Hospital. In homes, pollution often comes from cooking smoke or gases. Here , the facility's PM2.5 variability is primarily coupled with PM10.
+
+Mechanical Resuspension: The data shows that when coarse dust (PM10) goes up, fine dust (PM2.5) goes up with it. This suggests the pollution isn't coming from burning fuel (which would create gases like CO). Instead, it comes from mechanical activities - like people walking, moving beds, or cleaning. These actions kick up settled dust from the floor into the air.
+
+Also, investigating the critical importance of Lag features (e.g., PM2.5 at t-1) confirms that the environment suffers from poor ventilation. The air isn't being refreshed quickly, so once dust gets into the air, it stays there for a long time.
+
+**4.2 Practical Implications & Deployment**
+
+Based on such findings, we believe that these results can guide facility manager in taking more reality steps forward to the current problem:
+
+- Filtration vs. Gas Sensing: Since gaseous pollutants (like CO or TVOC) are not the primary drivers in this specific zone, investment should prioritize HEPA filtration to capture particulate matter rather than expensive gas-phase filtration systems.
+- Surface Hygiene: To stop PM2.5, you need to stop the dust from getting airborne. Wet-mopping the floors more frequently will remove the dust source so it can't be kicked up by foot traffic.
+- Edge Deployment Suitability: The superior performance of LightGBM over Deep Learning models is advantageous for deployment. You can install this model directly onto small, cheap sensor chips (IoT devices) right in the hospital wards. This allows the system to give real-time alerts instantly and cheaply.
+
+**4.3 Limitations**
+
+- Composite Index Complexity: While PM10 explains PM2.5 well, it does not capture gaseous risks (like TVOCs or O3) that might still affect health but don't correlate with particle mass.
+- Sensor Cross-Sensitivity: We must consider that low-cost PM sensors often calculate PM2.5 and PM10 from the same optical signal, potentially artificially inflating the correlation between them.
+
+
+> ### **Question 2: “How effectively does the LightGBM model capture the timing and magnitude of rapid PM2.5 spikes under real-time forecasting conditions?”**
+
+## **1. Introduction**
+
+&emsp; The critical health risks posed by sudden, dramatic spikes in fine particulate matter (PM2.5) concentration (e.g., exceeding 35 µg/m³), particularly for vulnerable groups like children, the elderly, and those with respiratory diseases, necessitate effective real-time air quality monitoring. It is essential for these systems to not only track long-term patterns but also promptly and accurately detect these rapid pollution surges.
+
+&emsp; A significant hurdle in this is that while many machine learning models achieve high overall forecasting accuracy, their reliability in tracking these extreme spike events is often hindered by the inherent tendency toward data smoothing and the principle of regression to the mean.
+
+&emsp; This analysis directly addresses this challenge by evaluating the capacity of a LightGBM real-time forecasting model to effectively capture both the direction and the magnitude of sudden PM2.5 concentration increases. The model utilizes a rich feature set for its short-term, real-time predictions, including historical (lagged and rolling) PM2.5 data, key external drivers (like PM10, CO2, and TVOC), and relevant temporal features (such as hour and month).
+
+## **2. Approach**
+
+To assess the real-time spike detection performance of the model, we have observed two complementary following visualisation strategies:
+
+
+
+**2.1. Actual vs. Predicted Scatter Plot**
+
+&emsp; This classic plot compares every predicted PM2.5 concentration against its corresponding actual measured value across the entire test period. 
+
+- First, the diagonal line acts as the reference point for perfect predictions. 
+
+- Crucially, by observing points that fall significantly below the diagonal have successfully revealed the systematic underestimation, a major concern, especially at high concentrations where spikes occur. 
+
+- Conversely, points above the line show overestimation. This plot gives us a global view of the model's predictive behavior.
+
+**2.2. Time Series Plot of Actual vs. Predicted PM2.5 (First 500 Steps)**
+
+&emsp; This visualisation allows direct inspection of the model’s ability to:
+
+- Track short-term fluctuations,
+- Respond to sudden rises and drops,
+- Preserve peak intensities during spike events.
+
+These two plots together enable evaluation of both global predictive behaviour and local transient dynamics, which is essential for judging real-time spike responsiveness. The model significantly underestimates the peak intensity of sudden pollution events. For instance, at time steps ~290 and ~460, actual PM2.5 levels (Blue Line) spike to ~240-250, but the model (Red Line) peaks lower, at ~200-210. This "damped" response is a critical safety risk; if a threshold is 220, the system will fail to alert for hazardous conditions.
+
+<div align="center">
+
+
+![ScatterPlot](Q2_LinePlot.png)
+
+Figure 4. Line Graph
+
+</div>
+
+## **3. Analysis**
+
+**3.1 Scatter Plot Confirmation (Overall Accuracy vs. Extreme Bias)**
+
+The model exhibits strong global accuracy, as shown by the Actual vs. Predicted PM2.5 Scatter Plot. Most blue data points cluster closely around the red "Perfect Prediction" diagonal line, suggesting the predictions are highly reliable for the majority of the PM2.5 range (up to about 200 µg/m³).
+
+However, a critical issue is identified: for actual PM2.5 values exceeding approximately 200 µg/m³, the predicted values consistently fall below the diagonal. This systematic pattern demonstrates a clear bias where the model reliably underestimates the magnitude of the most extreme PM2.5 peaks.
+
+<div align="center">
+
+
+![ScatterPlot](Q2_ScatterPlot.jpg)
+
+Figure 5. Scatter Plot
+
+</div>
+
+**3.2 Time Series Confirmation (Trend Tracking vs. Peak Attenuation)**
+
+In our table above, the Prediction vs Actual PM2.5 Time Series Plot further validates this behavior in a dynamic context.
+
+- **Effective Trend Tracking:** The predicted curve (red) meticulously follows the true signal (blue) across the 500 time steps, demonstrating an excellent ability to track the temporal evolution and direction of change, including both rapid rises and sharp drops. 
+- **Strong Spike Detection:** Critically, the model shows strong responsiveness during major spike events (e.g., around time steps 175, 300, 475). The red predicted line successfully detects the onset and timing of these sharp increases, fulfilling the requirement for early spike detection. 
+- **Amplitude Attenuation:** We can see that the chart visibly shows that the predicted red peaks are consistently lower than the corresponding actual blue peaks. For instance, around time step 300, where the actual PM2.5 approaches 250 µg/m³, the predicted value falls short, confirming the underestimation of peak intensity.
+
+In conclusion, these visual results indicate that the **LightGBM** model performs excellently in real-time trend tracking and early spike detection, effectively capturing when pollution rises.
+
+
+
+> ### **Question 3: For short-term prediction of indoor PM2.5, do deep sequence models (GRU/LSTM) significantly outperform gradient boosting models (XGBoost, LightGBM, CatBoost) in terms of RMSE/MAE/R<sup>2</sup>?**
+
+## **1. Introduction**
+
+Deep sequence models such as LSTM and GRU are widely recognised for their strong performance in modelling complex temporal dependencies, and have been reported to outperform traditional machine learning models in many long-horizon sequence prediction tasks. However, in practical real-time air quality monitoring systems, model performance must be evaluated not only in terms of prediction accuracy, but also in terms of computational complexity, latency, and deployment cost.
+
+For short-term PM2.5 forecasting, where the dominant information is often captured by recent observations and short-range autocorrelation, it remains an open question whether the additional modelling capacity of deep learning models can translate into meaningful performance gains over lightweight gradient boosting models. Furthermore, the trade-off between model accuracy and computational efficiency becomes a critical consideration for real-world indoor air quality applications.
+
+This question therefore aims to rigorously evaluate whether deep sequence models (LSTM and GRU) truly outperform gradient boosting approaches (XGBoost, LightGBM, and CatBoost) for short-term PM2.5 prediction, under realistic deployment constraints.
+
+## **2. Approach**
+
+To answer the research question, we implement a comparative analysis framework:
+
+
+
+**2.1. Forecasting Setup (Short-term Emphasis)**
+
+&emsp; The prediction task is defined as a short-term regression problem aimed at immediate actionable insights, such as triggering air purification systems or alerting occupants.
+
+- Target: PM2.5 concentration at time $t+1$ (1-hour ahead horizon).
+
+- Input Features: Current and historical sensor readings (CO2, TVOC, Temp, Humidity) and lagged values of the target variable ($PM2.5_{t}, PM2.5_{t-1}, \dots$).
+
+→ This task aims to reflect real-time operational constraints where immediate accuracy is prioritized over long-horizon trend estimation.
+
+**2.2. Models Under Comparison**
+
+The study contrasts two distinct modeling paradigms:
+
+- **Gradient Boosting Models (XGBoost, LightGBM, CatBoost):** Selected for their efficiency in handling tabular data, robustness to outliers, and fast inference speeds. These represent the "Lightweight" deployment tier.
+
+- **Deep Sequence Models (LSTM, GRU):** Selected for their architectural capacity to maintain internal state (memory), theoretically allowing them to capture non-linear temporal dynamics that feature-engineered regression might miss. These represent the "High-capacity" tier.
+
+**2.3. Comparison Protocol**
+
+To ensure validity, all models were evaluated under identical conditions:
+
+- **Data Split:** We split the dataset into 80% of them for training, the remaining used for testing.
+
+- **Feature Engineering:** Consistent lag generation and rolling statistics were applied to GBMs to provide them with temporal context comparable to the sequence input of RNNs.
+- **Normalization:** MinMaxScaler was applied to inputs for Deep Learning models to facilitate convergence, while tree-based models utilized raw or appropriately encoded data.
+- **Metrics:** We use relevant metrics to quantify performance of such models, using RMSE (Root Mean Square Error) to penalize large deviations, MAE (Mean Absolute Error) for interpretability, $R^2$ for explained variance, and MAPE for relative error.
+
+**2.4. Deployment-related Evaluation**
+
+&emsp; Beyond accuracy, the models are evaluated on practical deployability criteria, including training duration and computational complexity required for inference. This holistic view ensures the selected model fits the resource constraints of edge devices or real-time dashboards.
+
+
+## **3. Analysis**
+
+&emsp; After training model, we compared the test-set performance of the ensemble tree models against the recurrent neural networks, results in the following table:
+
+<div align="center">
+
+| **Model**   | **RMSE**   | **MSE**     | **MAE**    | **R²**    | **MAPE**   | **Training Time (s) |
+|:-----------:|:----------:|:-----------:|:----------:|:---------:|:----------:|:-------------------:|
+| XGBoost     | 18.2278    | 332.2516    | 13.8735    | 0.7427    | 0.1433     |1.37     |
+| **LightGBM**    |**18.1329**    | **328.8023**    | **13.8132**    | **0.7454**    | **0.1427**     |**10.19**     |
+| CatBoost    | 18.1812    | 330.5568    | 13.8369    | 0.7440    | 0.1430     |3.07     |
+| LSTM        | 18.3300    | 335.9903    | 13.9628    | 0.7398    | 0.1442     |184.99    |
+| GRU         | 18.9530    | 359.2146    | 14.4553    | 0.7219    | 0.1493     |211.17     |
+</div>
+
+<div align="center"><b>Table 1: Comparative Metrics (Test Set)</b></div>
+
+
+**3.1 Predictive accuracy**
+
+The indicated table reveals that Deep Sequence models did not significantly outperform Gradient Boosting models for the short-term (1-hour ahead) prediction horizon.
+
+- Best Performer: The LightGBM model achieved the highest predictive accuracy across all metrics, recording the lowest RMSE (18.13) and the highest Coefficient of Determination ($R^2 = 0.7454$). This suggests that LightGBM explains approximately 74.5% of the variance in the indoor PM2.5 data.
+
+- **Model Comparison (GBM vs. DL):**
+    + The best Gradient Boosting model (LightGBM) outperformed the best Deep Sequence model (LSTM).
+    + Specifically, LightGBM reduced the RMSE by 0.20 units and improved the $R^2$ by 0.0056 compared to LSTM. While the margin is narrow, it indicates that the additional computational complexity of the LSTM architecture did not translate into better accuracy for this specific dataset.
+    + The GRU model performed the worst among all candidates, with a significantly higher RMSE (18.95) and lower $R^2$ (0.7219), suggesting it struggled to capture the relevant dependencies as effectively as the tree-based ensembles.
+- **Error Magnitude:** The MAPE (Mean Absolute Percentage Error) for LightGBM was **14.27%**, which is slightly better than the LSTM's **14.42%**. This confirms that the tree-based models were more robust in minimizing relative errors across the testing horizon.
+
+**3.2 Computational Efficiency**
+
+- **Training Time:** Gradient Boosting models trained in seconds to minutes (1.37s, 10.19s, 3.07s). In contrast, the LSTM and GRU models required significantly longer training times (184.99s, 211.17s) to converge.
+- **Inference Latency:** For real-time applications, tree-based models offer millisecond-level inference latencies on standard CPUs. Deep sequence models incur higher computational overhead due to sequential matrix multiplications, often necessitating GPUs for comparable throughput.
+
+$\Rightarrow$ **Deep learning models incur substantially higher computational costs without delivering proportional gains in short-term forecasting accuracy.**
+
+## **4. Discussion**
+
+&emsp; Through the analysis above, we finalized to the answer of this question such that for short-term indoor PM2.5 forecasting with this dataset, Deep Sequence models do not offer a significant performance advantage over Gradient Boosting models. Indoor air quality, while sequential, is often heavily dependent on the immediate previous states (autocorrelation) and concurrent environmental factors (Temperature/Humidity). GBMs are highly efficient at exploiting these direct relationships. The “long-term memory” advantage of LSTMs is less critical for short-term horizons where the context window is narrow.
+
+&emsp; In terms of limitation, Deep Learning typically outperforms trees when we investigate the extensions of forecasting horizons (e.g., 24 hours ahead). Also, if the dataset were expanded to years of data across varying environments, the conclusion might shift in favor of DL.
+
+&emsp; Finally, although deep sequence models are theoretically more expressive, they do not provide a significant advantage over gradient boosting models for short-term PM2.5 forecasting on this dataset. Given the marginal accuracy difference and the substantially higher computational cost of LSTM and GRU, LightGBM emerges as the most practical choice, offering the optimal balance of high accuracy, interpretability, and efficiency for the production pipeline.
+
+
+# **3. Conclusion**
+
+&emsp;Our investigation examined the main environmental factors that cause indoor particle pollution, Q2, and compared how well machine learning and deep sequencing models did at short-term (1-hour ahead) forecasting. We arrived at three primary findings.
+
+&emsp;To begin with, PM10 and short-term temporal inertia are the best indicators of PM2.5. Their dominance shows that in these kinds of places, particulate pollution is mostly caused by mechanical resuspension and delayed ventilation, not by gaseous pollutants or changes to the environment. Lag features show that bad air quality has been around for a long time, which supports the idea that recent history is very useful for making forecasts about the near future.
+
+&emsp;Next, the LightGBM model is quite good at detecting trends in real time and figuring out when pollution starts. The substantial clustering in the scatter plot shows that the model accurately captures the changes in PM2.5 over time and in which direction they are going. But time series analysis shows that there is a clear problem with amplitude attenuation: the model always underestimates the strength of strong spikes (over 200 µg/m³). This "damped" response reveals that the model can accurately forecast when abrupt surges will happen, but it doesn't show how big they really are. This is a major problem for high-threshold safety alarms.
+
+&emsp;Third, deep sequence models (LSTM, GRU) did not perform better than Gradient Boosting models. LightGBM was the most accurate and didn't use a lot of processing power, which made it the greatest choice for real-time IAQ systems, especially on low-power edge devices. When the forecasting horizon is short, tree-based models can do just as well or better than more complicated neural architectures by using tailored temporal data.
+
+&emsp;One recommendation for such a system in the future is using longer-horizon forecasting (where deep learning may help), figuring out where pollution comes from, being used in different types of buildings, and adding more multimodal IAQ elements. These directions would make smart interior settings more useful and easier to use in real life.
+
+# **4. Lifecycle Reflection:**
+
+Throughout this project, our team consistently followed the Data Science Life Cycle to ensure that each stage contributed meaningfully to the development of a reliable air-quality prediction system. The below graph is an illustration of the Life Cycle process we follow while working as a team.
+
+
+
+
+<div align="center">
+
+
+![DS Lifecycle](datalifecycle.png)
+
+</div>
+
+# **5. Team Contribution Statement**
+
+<div align="center">
+
+| Member                  | Role                                                                                   |
+|-------------------------|-----------------------------------------------------------------------------------------|
+| Nguyen Hoang Nam        | Project Leader & Machine Learning / Dashboard Development Lead                          |
+| Nguyen Anh Duc          | Machine Learning Developer & Dashboard Engineer                                         |
+| Nguyen Tran Nhat Minh   | Machine Learning Developer, GitHub Coordinator & Reproducibility Engineer              |
+| Do Quang Thai An        | Exploratory Data Analyst & Report Writer                                               |
+| Vu Duc Thanh            | Data Acquisition Specialist & Report Writer                                            |
+
+</div>
+
+
+# **6. Individual Reflections**
+
+## **Nguyen Hoang Nam:**
+Throughout the project I learned a lot in many aspects as a team lead and also worked in Machine Learning/Dashboard. Firstly, I assign each person to different tasks that fit their strength the most. Take Duc and Minh for example, they have more experience in machine learning so I assign them to test and optimize different models. Beside that I am also the main contributor to the Dashboard. This is my first time using streamlit so I have learned how to create a prototype from end to end. This includes IAQ sensor data, visualizes multi-metric trends, detects alerts/events, runs hybrid forecasts (Moving Avg/BiLSTM/LightGBM), and provides AI-powered 1-hour insights and chat via DeepSeek. Beside that I am also in charge of running and testing different models like LSTM and Bi-LSTM, after doing some optimizations and tests, I decide to choose LSTM and add it to our final report. 
+
+Beside the new skills I learn, there are definitely some mistakes that I made throughout this journey. This is actually one of my few times working as a leader so I was having a hard time dividing the work for each member and balance between each member’s voice in the discussion. Luckily there were no conflicts and we successfully completed the project. Besides, I thought that the more complex the model is the better the project, turns out it is crucial to actually learn what does the customer want and what are the problems we have to solve. Overall, this project taught me a lot in three different aspects: leading, business understanding, time-series application, and building a dashboard and these experiences will definitely help me a lot when I work on a real project as a Data Scientist.
+
+
+## **Nguyen Anh Duc:**
+In this project on indoor air quality prediction, my main contribution focused on model selection, feature engineering, and training. I began by researching models suitable for time-series forecasting, identifying both traditional regression approaches and deep learning architectures that could capture temporal patterns. I was responsible for engineering features for each model type and conducting the full training process. This included creating lag features and rolling statistics for models such as XGBoost and LightGBM, as well as preparing sequential input for LSTM and GRU networks while carefully avoiding data leakage. After training, I documented and compared all evaluation metrics to help the team identify the most effective model. This comparison played a key role in ensuring our final choice balanced accuracy, stability, and computational efficiency. Additionally, I contributed to the design of our Streamlit dashboard, helping shape it into a user-friendly interface that resembles an indoor air quality monitoring system. 
+
+Throughout the project, I learned how to manage my time effectively and adapt different feature engineering techniques to different model families. I also gained hands-on experience with models I had not used before, which pushed me to troubleshoot issues such as sequence preparation and data leakage. These challenges ultimately strengthened my understanding of time-series prediction. Overall, this project provided valuable practical experience and helped me grow both technically and professionally, giving me skills that will be highly useful as I move into future data science work.
+
+
+## **Nguyen Tran Nhat Minh:**
+In this project,  I served as the primary Repository Maintainer, responsible for establishing a robust Version Control workflow on GitHub. My focus was on ensuring code maintainability and operational efficiency. I designed a structured directory hierarchy to make data, scripts, and models easily accessible for all stakeholders. Furthermore, I orchestrated the team’s branching strategy, actively assisting team members in managing their feature branches, resolving merge conflicts, and integrating distinct modules into the main codebase to ensure a stable deployment pipeline.
+
+As a member of the modeling team, I take part in the development and evaluation of traditional machine learning baselines for the Outdoor Air Quality prediction task. I was responsible for building, training, and validating tree-based ensemble models (including LightGBM and XGBoost) to establish performance benchmarks. My work involved rigorous hyperparameter tuning and error analysis (RMSE/R²) to assess how well these traditional approaches could capture complex outdoor environmental dynamics before the integration of deep learning methods.
+
+
+## **Do Quang Thai An:**
+I contributed to the project as an Exploratory Data Analyst and Writer in report. My jobs included performing the initial data cleaning, handling missing values, getting cleaned datasets and exploring the dataset using correlation heatmaps. I also helped ideate and refine the Data Science questions with the team, ensuring our analysis aligned with the project objectives. Through this project, I collaborated with the machine learning model subteam to understand the approach of the team in addressing data science tasks and refined our problem statements many times as new insights sparked in our mind. However, I found it quite challenging using GitHub as this is new to me. I spent around 3-4 days learning how to use it, but still, faced several merge conflicts and workflow issues. Fortunately, with the assistance from my team, and online learning materials, I learned how to resolve conflicts, manage branches, and maintain a clean workflow with the team. 
+
+From this project, I learned such valuable skills in technology, such as cleaning and analysing time-series data - resampling dataset in 5 minutes. Also, as the main writer for the report, I have to interpret and understand the model well, so it gave me more experience in how such models can solve our questions thoroughly. More importantly, I gained more experience in project and time management where I learned the damage that task dependencies may cause in a project. Moving forward, I hope to improve my technical contribution and expand my understanding of machine learning workflows more.
+
+## **Vu Duc Thanh:**
+In this project, my role focused on identifying the real-world problem, gathering relevant background knowledge, contributing to data collection, and co-writing the report. I reviewed academic papers on health impacts and air pollution in Vietnam to choose the motivation of the project so that it can solve real-world problems. I also supported the team by assessing the dataset if appropriate for modeling, discussing limitations, and organising report sections.
+
+My main contribution is reflected in the written report, where me and other teammates write most of the report. I worked closely with others to refine our problem statements, for example when the initial technical question needed to be reframed into one that better addressed practical, real-life concerns. I discussed and gave feedback on teammates’ work, for instance, when visualizing the user-friendly dashboard.
+
+When working with my team, I learned how to collaborate and listen to feedback, and adjust my ideas. Also, I improved my ability to research independently, read and understand Python code written by teammates, and build simple Streamlit dashboards. When I encountered hard code concepts, I used AI tools and asked teammates for clarification, so that I could resolve the concepts clearly.
+
+A challenge I faced was keeping up with new technical concepts, but consistent communication with the group helped me overcome this. In the future, our team could improve by scheduling more regular offline meetings to explain the ideas and model concepts, hence gaining more insights to work on the report. 
+
+
+# **7. References**
+1. Chen, J.; Hoek, G. Long-term exposure to PM and all-cause and cause-specific mortality: A systematic review and meta-analysis. Environ. Int. 2020, 143, 105974
+2. Haider Qasim Faleh, Jumana Waleed Salih, Amer M. Ibrahim (2025), IAQ Baquba Hospital dataset – University of Diyala | Kaggle
+3. Lundberg, S. M., & Lee, S.-I. (2017). A unified approach to interpreting model predictions. arXiv. https://doi.org/10.48550/arXiv.1705.07874
+4. Nguyen, T.L. (2020) Environmental pollution in Vietnam’s craft villages E3S Web of Conferences, InterAGRO-MASH 2020, 35, 06012. 	https://doi.org/10.1051/e3sconf/202017506012
+5. Vanderbloemen, L., Liamputtong, P., Nguyen, O. T. K., Hoang, K. V. N., Huynh, H. X., Hoang, M. P., Tran, M. G., Nguyen, P. H., Pham, T. N. H., Kapil, D., Elgebaly, A., & Taylor-Robinson, A. W. (2025). Hanoi Air Quantitative Report: A Cross-Sectional Study of Knowledge, Awareness, and Sustainable Practices Related to Air Pollution Among Residents of Hanoi, Vietnam. Sustainability, 17(14), 6557.
+https://doi.org/10.3390/su17146557 
+
+# 9. Appendix:
+
+# **10. Bonus**
+In terms of bonus challenge, our team tried to implement an air‑quality monitoring dashboard provides a comprehensive, real‑time overview of indoor environmental conditions with multiple visualization modules and analytical tools:
+
+10.1. Current Status Panel
+
+At the top of the dashboard, users see live readings for key air‑quality metrics, each color‑coded to reflect safety levels:
+- PM2.5  - Fine particulate matter, with health status indicators (e.g., Very Unhealthy).
+- PM10 - Larger particulate matter levels, labeled with severity (e.g., Hazardous).
+- CO₂ - Real‑time carbon dioxide concentration with freshness indicators.
+- Temperature - Shown with comfort assessment (e.g., Optimal).
+- Humidity - Displays relative humidity and comfort category.
+- TVOC - Total volatile organic compounds, with a clarity rating (e.g., Good).
+
+Each metric includes:
+- A live numerical value
+- A 1‑hour trend change (↑/↓)
+- A short health or comfort recommendation
+
+10.2. Historical Trends (Last 24 Hours)
+
+A multi‑line chart visualizes fluctuations of all key metrics over the past 24 hours: 
+
+- PM2.5, PM10, CO₂, Temperature, Humidity, TVOC
+
+Users can observe patterns, spikes, and long‑term stability across the day.
+
+10.3. Multi‑Metric Overview (Radar Chart)
+
+A radar chart provides a “fingerprint” of current environmental conditions by mapping all metrics on normalized scales:
+- Smaller shapes = cleaner / healthier environment
+- Larger shapes = higher pollution or imbalance
+A highlighted alert points out the primary concern (e.g., PM2.5 at its limit).
+
+10.4. Forecast for PM2.5 (Next 6 Hours)
+
+This section includes:
+- Recent PM2.5 history chart - showing short‑term fluctuations.
+- Forecast trajectory - a predictive model illustrating expected PM2.5 levels over the next 6 hours.
+- A line or regression model shows the predicted trend from current time forward.
+
+10.5. AI Analysis Panel
+
+An optional AI module (DeepSeek or similar) generates automated summaries:
+- Current air‑quality conditions
+- Expected changes in the next hour or longer
+- Insights based on model predictions
+
+&emsp;&emsp;    This tool activates when an API key is provided.
+
+10.6. Controls Panel
+On the left sidebar, users can adjust dashboard behavior:
+- Upload CSV Data - supports drag‑and‑drop for external datasets.
+- History Window Selection - view data from the last 24 hours, last 7 days, or entire dataset.
+- Forecast Metric Selector - choose which pollutant or environmental variable to forecast.
+- Forecast Span Slider - adjust the prediction range (e.g., 1–6 hours).
+- Prediction Model Options - choose between moving‑average or LightGBM‑based recursive forecasts.
+
