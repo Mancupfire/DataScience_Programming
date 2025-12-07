@@ -6,3 +6,12 @@ openai
 langchain-core
 langchain-deepseek
 python-dotenv
+lightgbm
+xgboost
+catboost
+scikit-learn
+seaborn
+matplotlib
+tensorflow
+jupyter
+shap
