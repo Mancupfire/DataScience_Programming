@@ -25,7 +25,7 @@ This prototype leverages hybrid machine learning models (**LightGBM**, **BiLSTM*
 ⚠️ **Important:** Ensure the file structure matches the tree below. The application relies on the specific folder name `Training Model` to load the dataset and models.
 
 ```text
-V-IndoorCARE/
+Smart-IndoorCARE/
 ├── app.py                     # Main Streamlit application
 ├── lightgbm_adapter.py        # Forecasting logic for LightGBM
 ├── bilstm_adapter.py          # (Optional) Forecasting logic for BiLSTM
