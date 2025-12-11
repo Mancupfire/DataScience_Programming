@@ -506,6 +506,56 @@ def get_health_status(metric: str, value: float) -> Tuple[str, str, str]:
 
     return status, color, rec
 
+INDEX_LEVELS = {
+    "PM2.5": [
+        {"label": "Good", "range": "0 - 12 µg/m³", "color": "#10b981", "note": "Indoor air is clean."},
+        {"label": "Moderate", "range": "12.1 - 35.4 µg/m³", "color": "#eab308", "note": "Slight particles; keep light ventilation."},
+        {"label": "Unhealthy for SG", "range": "35.5 - 55.4 µg/m³", "color": "#f97316", "note": "Sensitive occupants: ventilate and run purifier."},
+        {"label": "Unhealthy", "range": "55.5 - 150.4 µg/m³", "color": "#ef4444", "note": "High particulates; run purifier and reduce indoor sources."},
+        {"label": "Very Unhealthy", "range": "150.5 - 250.4 µg/m³", "color": "#a855f7", "note": "Very high; keep windows closed if outdoor is worse, purifier on high."},
+        {"label": "Hazardous", "range": "> 250.4 µg/m³", "color": "#881337", "note": "Severe indoor pollution; ventilate with filtration and avoid the area."},
+    ],
+    "PM10": [
+        {"label": "Good", "range": "0 - 54 µg/m³", "color": "#10b981", "note": "Indoor air is clean."},
+        {"label": "Moderate", "range": "55 - 154 µg/m³", "color": "#eab308", "note": "Some dust; light ventilation/cleaning."},
+        {"label": "Unhealthy for SG", "range": "155 - 254 µg/m³", "color": "#f97316", "note": "Sensitive occupants: ventilate, reduce dust sources."},
+        {"label": "Unhealthy", "range": "255 - 354 µg/m³", "color": "#ef4444", "note": "High coarse particles; clean surfaces and filter air."},
+        {"label": "Very Unhealthy", "range": "355 - 424 µg/m³", "color": "#a855f7", "note": "Very high; avoid stirring dust, run purifier on high."},
+        {"label": "Hazardous", "range": "> 424 µg/m³", "color": "#881337", "note": "Severe dust; isolate area and ventilate with filtration."},
+    ],
+    "CO2": [
+        {"label": "Good", "range": "≤ 1000 ppm", "color": "#10b981", "note": "Indoor air feels fresh; ventilation is adequate."},
+        {"label": "Fair", "range": "1001 - 1500 ppm", "color": "#eab308", "note": "Air is getting stale; crack a window or start exhaust."},
+        {"label": "Poor", "range": "1501 - 2000 ppm", "color": "#f97316", "note": "Drowsiness likely; ventilate now or reduce occupancy."},
+        {"label": "Bad", "range": "> 2000 ppm", "color": "#ef4444", "note": "Ventilation insufficient; clear the room and maximize airflow."},
+    ],
+    "Temp": [
+        {"label": "Cool", "range": "< 18°C", "color": "#3b82f6", "note": "Below indoor comfort; adjust heating."},
+        {"label": "Comfortable", "range": "18 - 26°C", "color": "#10b981", "note": "Comfortable indoor temperature."},
+        {"label": "Warm", "range": "> 26°C", "color": "#f97316", "note": "Warm indoors; increase airflow or cooling."},
+    ],
+    "Hum": [
+        {"label": "Dry", "range": "< 30%", "color": "#eab308", "note": "Dry indoors; use a humidifier and hydrate."},
+        {"label": "Optimal", "range": "30 - 60%", "color": "#10b981", "note": "Comfortable indoor humidity."},
+        {"label": "Humid", "range": "> 60%", "color": "#eab308", "note": "Feels damp; dehumidify and improve airflow."},
+    ],
+    "TVOC": [
+        {"label": "Good", "range": "≤ 300 ppb", "color": "#10b981", "note": "No noticeable indoor chemical build-up."},
+        {"label": "Moderate", "range": "301 - 500 ppb", "color": "#eab308", "note": "Light indoor odors; keep airflow steady."},
+        {"label": "Marginal", "range": "501 - 1000 ppb", "color": "#f97316", "note": "Noticeable VOCs; ventilate and limit sprays/solvents."},
+        {"label": "High", "range": "> 1000 ppb", "color": "#ef4444", "note": "High VOCs; remove sources, ventilate, and use filtration/charcoal."},
+    ],
+}
+
+UNIVERSAL_LEVELS = ["Good", "Moderate", "Unhealthy", "Very Unhealthy", "Hazardous"]
+LEVEL_COLORS = {
+    "Good": "#10b981",
+    "Moderate": "#eab308",
+    "Unhealthy": "#ef4444",
+    "Very Unhealthy": "#a855f7",
+    "Hazardous": "#881337",
+}
+
 def check_alerts(df: pd.DataFrame, snapshot: Dict[str, float]) -> List[str]:
     """Generates alerts for critical thresholds and sudden spikes."""
     alerts = []
@@ -782,6 +832,97 @@ def plot_spider_chart(snapshot: Dict[str, float], metrics: List[str]) -> None:
 
     return fig, r_values, theta_values, limits
 
+def render_index_levels(metrics: List[str]) -> None:
+    """Display a single unified table of index levels across metrics."""
+    st.subheader("Index Levels by Metric")
+    st.caption("Five universal levels across all metrics; ranges reuse the app’s existing thresholds.")
+
+    available = [m for m in metrics if m in INDEX_LEVELS]
+    if not available:
+        st.info("No metrics available for index levels.")
+        return
+
+    metric_desc = {
+        "PM2.5": "Fine particles (µg/m³)",
+        "PM10": "Coarse dust (µg/m³)",
+        "CO2": "Carbon dioxide (ppm)",
+        "Temp": "Indoor temperature (°C)",
+        "Hum": "Relative humidity (%)",
+        "TVOC": "Volatile organic compounds (ppb)",
+    }
+
+    def normalize_label(label: str, metric: str) -> str:
+        key = label.lower()
+        if "good" in key:
+            return "Good"
+        if "moderate" in key or "fair" in key:
+            return "Moderate"
+        if "very unhealthy" in key:
+            return "Very Unhealthy"
+        if "hazard" in key or "bad" == key.strip():
+            return "Hazardous"
+        if "unhealthy" in key or "poor" in key or "high" in key:
+            return "Unhealthy"
+        if metric in ["Temp", "Hum"] and "comfortable" in key:
+            return "Good"
+        if metric in ["Temp"] and ("warm" in key or "cool" in key):
+            return "Moderate"
+        return "Unhealthy"
+
+    # Build a lookup per metric of universal level -> content
+    metric_level_map: Dict[str, Dict[str, Dict[str, str]]] = {}
+    for metric in available:
+        band_map: Dict[str, Dict[str, str]] = {}
+        for band in INDEX_LEVELS.get(metric, []):
+            level = normalize_label(band["label"], metric)
+            # Only first occurrence kept
+            if level not in band_map:
+                band_map[level] = {"range": band["range"], "note": band["note"]}
+        metric_level_map[metric] = band_map
+
+    # Render table
+    header_html = "<tr><th style='padding:8px; text-align:left; color:#e5e7eb;'>Level</th>"
+    for metric in available:
+        header_html += (
+            f"<th style='padding:8px; text-align:left; color:#e5e7eb;'>"
+            f"{metric}<div style='color:#94a3b8; font-size:0.9em; font-weight:500;'>{metric_desc.get(metric, '')}</div>"
+            f"</th>"
+        )
+    header_html += "</tr>"
+
+    rows_html = ""
+    for level in UNIVERSAL_LEVELS:
+        bg = LEVEL_COLORS.get(level, "#334155") + "20"
+        rows_html += f"<tr style='background:{bg};'>"
+        rows_html += (
+            f"<td style='padding:8px; font-weight:700; color:{LEVEL_COLORS.get(level, '#e5e7eb')};'>"
+            f"{level}</td>"
+        )
+        for metric in available:
+            info = metric_level_map.get(metric, {}).get(level)
+            if info:
+                cell = f"<div style='color:#e5e7eb; font-weight:600;'>{info['range']}</div><div style='color:#cbd5e1; font-size:0.9em;'>{info['note']}</div>"
+            else:
+                cell = "<span style='color:#94a3b8;'>—</span>"
+            rows_html += f"<td style='padding:8px; border-left:1px solid rgba(148,163,184,0.2);'>{cell}</td>"
+        rows_html += "</tr>"
+
+    st.markdown(
+        f"""
+        <div style="overflow-x:auto; background: rgba(255,255,255,0.02); border: 1px solid rgba(148,163,184,0.25); border-radius: 12px; margin-top:8px;">
+            <table style="width:100%; border-collapse:collapse;">
+                <thead style="background: rgba(255,255,255,0.03); border-bottom:1px solid rgba(148,163,184,0.25);">
+                    {header_html}
+                </thead>
+                <tbody>
+                    {rows_html}
+                </tbody>
+            </table>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
 
 # --- Main App ---
 
@@ -867,6 +1008,7 @@ def main() -> None:
     # Top Metric Cards
     st.subheader("Current Status")
     metric_cards(snapshot, df, available_metrics)
+    render_index_levels(available_metrics)
 
     # Filtering for Charts
     if timeframe == "Last 24h":
@@ -880,44 +1022,6 @@ def main() -> None:
 
     # Trend Charts (Dual Axis)
     plot_dual_axis_trend(filtered, trend_metrics, timeframe.lower())
-    
-    # Spider Chart with Interpretation
-    st.subheader("Multi-Metric Overview")
-    col_chart, col_interp = st.columns([2, 1])
-    
-    with col_chart:
-        fig, r_vals, theta_vals, limits = plot_spider_chart(snapshot, available_metrics)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True)
-    
-    with col_interp:
-        st.markdown("#### 📖 How to Read This Chart")
-        st.markdown("""
-        **Shape Meaning:**
-        - **Smaller shape** = Better air quality (closer to center)
-        - **Larger shape** = Higher pollution levels
-        
-        **Scale:**  
-        Each axis is normalized to 0-100% of a typical "high" value.
-        """)
-        
-        # Identify the highest concern
-        if r_vals and theta_vals:
-            # Exclude the closing duplicate point
-            actual_r = r_vals[:-1] if len(r_vals) > len(available_metrics) else r_vals
-            actual_theta = theta_vals[:-1] if len(theta_vals) > len(available_metrics) else theta_vals
-            
-            if actual_r:
-                max_idx = actual_r.index(max(actual_r))
-                worst_metric = actual_theta[max_idx]
-                worst_pct = actual_r[max_idx]
-                
-                if worst_pct > 70:
-                    st.warning(f"⚠️ **Main Concern:** {worst_metric} is at {worst_pct:.0f}% of its limit.")
-                elif worst_pct > 40:
-                    st.info(f"ℹ️ **Watch:** {worst_metric} is elevated ({worst_pct:.0f}%).")
-                else:
-                    st.success("✅ All metrics are within comfortable ranges.")
 
     # Forecasting
     st.subheader(f"Forecast for {metric} (next {horizon_hours}h)")
@@ -934,12 +1038,6 @@ def main() -> None:
     )
     
     forecast_df = pd.DataFrame({"ts": future_ts, "Predicted": predictions})
-    plot_df = forecast_df
-    if metric == "PM2.5":
-        limit_ts = current_ts + timedelta(hours=3)
-        plot_df = forecast_df[forecast_df["ts"] <= limit_ts]
-        if plot_df.empty and not forecast_df.empty:
-            plot_df = forecast_df.iloc[[0]]
 
     # Side-by-side Forecast Charts
     hist_fig = px.line(
@@ -959,7 +1057,7 @@ def main() -> None:
         font=dict(color="#d1d5db"),
     )
 
-    pred_fig = px.line(plot_df, x="ts", y="Predicted", title="Forecasted Trajectory", line_shape="spline")
+    pred_fig = px.line(forecast_df, x="ts", y="Predicted", title="Forecasted Trajectory", line_shape="spline")
     pred_fig.update_traces(line_color="#10b981", mode="lines")
     # Add the last known point to connect the lines visually
     pred_fig.add_scatter(
