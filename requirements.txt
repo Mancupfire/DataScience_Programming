@@ -6,3 +6,12 @@ openai
 langchain-core
 langchain-deepseek
 python-dotenv
+lightgbm
+scikit-learn
+nbconvert
+seaborn
+matplotlib
+nbformat
+nbclient
+jupyter
+shap

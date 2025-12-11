@@ -96,6 +96,43 @@ def format_forecast_series(
         points.append({"timestamp": ts_str, "value": float(val)})
     return points
 
+def closest_projection_value(
+    future_ts: List[pd.Timestamp],
+    predictions: List[float],
+    target_time: pd.Timestamp,
+) -> Optional[float]:
+    """Return the prediction closest to the requested timestamp."""
+    if not future_ts or not predictions:
+        return None
+
+    limit = min(len(future_ts), len(predictions))
+    if target_time > future_ts[limit - 1]:
+        return None
+
+    idx = min(
+        range(limit),
+        key=lambda i: abs((future_ts[i] - target_time).total_seconds()),
+    )
+    return float(predictions[idx])
+
+def describe_change_direction(current_value: float, future_value: Optional[float]) -> str:
+    """Translate a numeric delta into a professional, qualitative direction."""
+    if future_value is None or pd.isna(future_value) or pd.isna(current_value):
+        return "Insufficient data"
+
+    delta = future_value - current_value
+    pct_change = delta / max(abs(current_value), 1e-6)
+
+    if pct_change >= 0.25:
+        return "Sharp increase"
+    if pct_change >= 0.08:
+        return "Gradual increase"
+    if pct_change <= -0.25:
+        return "Sharp decrease"
+    if pct_change <= -0.08:
+        return "Gradual decrease"
+    return "Holding steady"
+
 # --- Theme Injection ---
 def _inject_theme() -> None:
     """Minimal custom theming."""
@@ -103,10 +140,21 @@ def _inject_theme() -> None:
         """
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=Manrope:wght@500;700&display=swap');
-        html, body, [class*="stApp"] {font-family: 'Space Grotesk', 'Manrope', sans-serif; background: radial-gradient(120% 120% at 10% 20%, #0f172a 0%, #0b1021 40%, #050912 100%); color: #e5e7eb;}
-        h1, h2, h3, h4 {font-family: 'Manrope', sans-serif;}
-        .stMetric {background: linear-gradient(135deg, rgba(45,212,191,0.08), rgba(59,130,246,0.08)); border: 1px solid rgba(148,163,184,0.2); border-radius: 14px; padding: 10px 12px;}
+        html, body, [class*="stApp"] {
+            font-family: 'Space Grotesk', 'Manrope', sans-serif;
+            background: radial-gradient(120% 120% at 10% 20%, #0f172a 0%, #0b1021 40%, #050912 100%);
+            color: #e5e7eb;
+        }
+        h1, h2, h3, h4 {font-family: 'Manrope', sans-serif; color: #e5e7eb;}
+        .stMetric {
+            background: linear-gradient(135deg, rgba(45,212,191,0.08), rgba(59,130,246,0.08));
+            border: 1px solid rgba(148,163,184,0.2);
+            border-radius: 14px;
+            padding: 10px 12px;
+            color: #e5e7eb;
+        }
         .stMarkdown, .stCaption {color: #d1d5db;}
+        a {color: #22d3ee;}
         </style>
         """,
         unsafe_allow_html=True,
@@ -790,7 +838,17 @@ def main() -> None:
     available_metrics = [m for m in DEFAULT_METRICS if m in df.columns]
 
     with st.sidebar:
+        st.header("IAQ Trends")
+        trend_metrics = st.multiselect(
+            "Metrics to plot",
+            options=available_metrics,
+            default=available_metrics[:2] if len(available_metrics) >= 2 else available_metrics,
+            help="Select only the signals you want to view in the trend chart.",
+        )
         st.caption(f"Data cadence: ~{freq_minutes:.1f} min | {len(df):,} rows")
+
+    if not trend_metrics:
+        trend_metrics = [metric] if metric in available_metrics else available_metrics[:1]
 
     # Alerts & Notifications
     alerts = check_alerts(df, snapshot)
@@ -821,7 +879,7 @@ def main() -> None:
         filtered = df
 
     # Trend Charts (Dual Axis)
-    plot_dual_axis_trend(filtered, available_metrics, timeframe.lower())
+    plot_dual_axis_trend(filtered, trend_metrics, timeframe.lower())
     
     # Spider Chart with Interpretation
     st.subheader("Multi-Metric Overview")
@@ -865,6 +923,7 @@ def main() -> None:
     st.subheader(f"Forecast for {metric} (next {horizon_hours}h)")
     
     horizon_steps = max(1, int(np.ceil((horizon_hours * 60) / freq_minutes)))
+    current_ts = filtered["ts"].iloc[-1]
     future_ts, predictions, note = compute_forecast(
         df=filtered, # Pass recent history for context
         metric=metric, 
@@ -875,34 +934,89 @@ def main() -> None:
     )
     
     forecast_df = pd.DataFrame({"ts": future_ts, "Predicted": predictions})
+    plot_df = forecast_df
+    if metric == "PM2.5":
+        limit_ts = current_ts + timedelta(hours=3)
+        plot_df = forecast_df[forecast_df["ts"] <= limit_ts]
+        if plot_df.empty and not forecast_df.empty:
+            plot_df = forecast_df.iloc[[0]]
 
     # Side-by-side Forecast Charts
     hist_fig = px.line(
         filtered.tail(120),
         x="ts",
         y=metric,
-        markers=True,
         title=f"{metric} (Recent History)",
-        color_discrete_sequence=["#3b82f6"]
+        color_discrete_sequence=["#3b82f6"],
+        line_shape="spline",
     )
-    hist_fig.update_layout(height=300, margin=dict(l=20, r=20, t=40, b=20), plot_bgcolor="rgba(0,0,0,0)")
+    hist_fig.update_traces(mode="lines")
+    hist_fig.update_layout(
+        height=300,
+        margin=dict(l=20, r=20, t=40, b=20),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#d1d5db"),
+    )
 
-    pred_fig = px.line(forecast_df, x="ts", y="Predicted", markers=True, title="Forecasted Trajectory")
-    pred_fig.update_traces(line_color="#10b981")
+    pred_fig = px.line(plot_df, x="ts", y="Predicted", title="Forecasted Trajectory", line_shape="spline")
+    pred_fig.update_traces(line_color="#10b981", mode="lines")
     # Add the last known point to connect the lines visually
     pred_fig.add_scatter(
-        x=[filtered["ts"].iloc[-1]], 
+        x=[current_ts], 
         y=[filtered[metric].iloc[-1]], 
         mode="markers", 
         name="Now",
         marker=dict(color="#f43f5e", size=8)
     )
-    pred_fig.update_layout(height=300, margin=dict(l=20, r=20, t=40, b=20), plot_bgcolor="rgba(0,0,0,0)")
+    pred_fig.update_layout(
+        height=300,
+        margin=dict(l=20, r=20, t=40, b=20),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#d1d5db"),
+    )
 
     col1, col2 = st.columns(2)
     col1.plotly_chart(hist_fig, use_container_width=True)
     col2.plotly_chart(pred_fig, use_container_width=True)
-    
+
+    st.markdown(
+        """
+        **What this outlook shows:** Directional cues (Sharp/Gradual increase or decrease, or Holding steady) forecast how the selected metric is expected to move. Values in parentheses are the projected readings at each time mark so you can decide whether to ventilate, filter, or wait.
+        """,
+        help="Uses the current snapshot and the chosen forecasting method to summarize expected movement at near-term checkpoints.",
+    )
+
+    # Directional summary for key horizons
+    outlook_targets = [
+        (30, "Next 30 minutes"),
+        (60, "Next 1 hour"),
+        (180, "Next 3 hours"),
+    ]
+    current_value = snapshot.get(metric, float("nan"))
+    outlook_rows = []
+
+    for minutes, label in outlook_targets:
+        target_time = current_ts + timedelta(minutes=minutes)
+        projected_val = closest_projection_value(future_ts, predictions, target_time)
+        direction = describe_change_direction(current_value, projected_val)
+        value_text = f"{projected_val:.2f}" if projected_val is not None else "N/A"
+        outlook_rows.append((label, direction, value_text))
+
+    outlook_html = "<div style='background:#ecfdf3; border:1px solid #bbf7d0; border-radius:12px; padding:12px 16px; margin-top:8px;'>"
+    outlook_html += "<div style='font-weight:700; color:#065f46; margin-bottom:8px;'>Trajectory outlook</div>"
+    for label, direction, value_text in outlook_rows:
+        outlook_html += (
+            f"<div style='display:flex; justify-content:space-between; padding:6px 0; border-top:1px solid #d1fae5;'>"
+            f"<span style='color:#065f46;'>{label}</span>"
+            f"<span style='font-weight:600; color:#0f172a;'>{direction} "
+            f"<span style='color:#047857; font-weight:500;'>({value_text})</span></span>"
+            f"</div>"
+        )
+    outlook_html += "</div>"
+    st.markdown(outlook_html, unsafe_allow_html=True)
+
     st.caption(f"ℹ️ {note}")
 
     one_hour_point = pick_one_hour_point(future_ts, predictions, freq_minutes)

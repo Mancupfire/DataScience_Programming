@@ -31,5 +31,13 @@ streamlit run app.py
 - Default run uses `cleaned_dataset.csv` in the repo root.
 - You can also upload your own CSV inside the app (needs a `ts` timestamp column plus metric columns like PM2.5/PM10/CO2/etc.).
 
+## Run notebooks headlessly (one command)
+Execute any notebook and save an executed copy alongside it:
+```bash
+./scripts/run_notebook.sh "Training Model/lightgbm.ipynb"
+```
+- Output: `Training Model/lightgbm.executed.ipynb`
+- LightGBM notebook also regenerates `Training Model/lightgbm_model.txt` and `Training Model/lightgbm_features.json`.
+
 ## Optional: AI insights
 Set `OPENAI_API_KEY` in your shell or `.env` (not committed) to enable the AI summary button; otherwise the app falls back to rule-based tips.
