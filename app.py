@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import math
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -17,6 +18,8 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_deepseek import ChatDeepSeek
 from plotly.subplots import make_subplots
 import streamlit as st
+
+# --- Adapter Hooks ---
 try:
     from bilstm_adapter import run_bilstm_prediction
 
@@ -124,14 +127,86 @@ def describe_change_direction(current_value: float, future_value: Optional[float
     pct_change = delta / max(abs(current_value), 1e-6)
 
     if pct_change >= 0.25:
-        return "Sharp increase"
+        return "Sharp increase ↗️"
     if pct_change >= 0.08:
-        return "Gradual increase"
+        return "Gradual increase ↗️"
     if pct_change <= -0.25:
-        return "Sharp decrease"
+        return "Sharp decrease ↘️"
     if pct_change <= -0.08:
-        return "Gradual decrease"
-    return "Holding steady"
+        return "Gradual decrease ↘️"
+    return "Holding steady ➡️"
+
+# --- NEW: PHYSICS SIMULATION MODULE ---
+def apply_control_physics(
+    predictions: List[float], 
+    metric: str, 
+    action: str, 
+    freq_minutes: float
+) -> Tuple[List[float], str]:
+    """
+    Applies a physics-based decay correction to the AI forecast based on user intervention.
+    Uses a simplified First-order decay model: C(t) = C_0 * e^(-kt) + C_background
+    """
+    if action == "None" or not predictions:
+        return predictions, "AI Raw Forecast"
+
+    # Define Decay Constants (k) per minute based on physics heuristics
+    # These represent ACH (Air Changes per Hour) converted to minute decay
+    decay_map = {
+        "Open Window (Ventilation)": {
+            "PM2.5": 0.03, "PM10": 0.03, "CO2": 0.05, "TVOC": 0.04, "Hum": 0.01, "Temp": 0.01
+        },
+        "Air Purifier (Max)": {
+            "PM2.5": 0.08, "PM10": 0.09, "CO2": 0.00, "TVOC": 0.01, "Hum": 0.00, "Temp": 0.00
+        },
+        "Dehumidifier": {
+            "PM2.5": 0.00, "PM10": 0.00, "CO2": 0.00, "TVOC": 0.00, "Hum": 0.06, "Temp": 0.005
+        }
+    }
+    
+    # Background levels (asymptotes - typical outdoor/clean levels)
+    background_levels = {
+        "PM2.5": 5.0, "PM10": 10.0, "CO2": 420.0, "Temp": 25.0, "Hum": 50.0, "TVOC": 50.0
+    }
+
+    k = decay_map.get(action, {}).get(metric, 0.0)
+    bg = background_levels.get(metric, 0.0)
+    
+    # If the action doesn't affect this metric (e.g. Purifier on CO2), return original
+    if k == 0:
+        return predictions, f"Action '{action}' has negligible effect on {metric}"
+
+    simulated_preds = []
+    
+    for i, ai_val in enumerate(predictions):
+        # Physics correction: 
+        # We blend the AI's trend (source term) with the removal rate (sink term)
+        
+        # Time step in minutes
+        t_step = freq_minutes
+        
+        # Calculate decay factor for this time step
+        decay_factor = math.exp(-k * t_step)
+        
+        if i == 0:
+            simulated_val = ai_val # Start anchor
+        else:
+            prev_sim = simulated_preds[-1]
+            
+            # Physics decay step: reduce pollution towards background level
+            physics_step = (prev_sim - bg) * decay_factor + bg
+            
+            # AI trend component (what the model thinks would happen naturally)
+            prev_ai = predictions[i-1]
+            ai_delta = ai_val - prev_ai
+            
+            # Combine: Physics Decay + (Damped) AI Trend
+            # If we are ventilating, the source accumulation (AI trend) is also reduced/flushed out
+            simulated_val = physics_step + (ai_delta * 0.5) 
+            
+        simulated_preds.append(max(simulated_val, bg)) # Clamp to background
+
+    return simulated_preds, f"Simulated: {action}"
 
 # --- Theme Injection ---
 def _inject_theme() -> None:
@@ -345,8 +420,8 @@ def compute_forecast(
                 
                 # We need at least 24 hours of data
                 if len(df_lgbm) < 24:
-                     note = "Not enough data for LightGBM lags (need 24h). Using Moving Avg."
-                     values = moving_average_forecast(df[metric], horizon, window=max(12, horizon // 2))
+                      note = "Not enough data for LightGBM lags (need 24h). Using Moving Avg."
+                      values = moving_average_forecast(df[metric], horizon, window=max(12, horizon // 2))
                 else:
                     # Run recursive forecast (returns predictions at 5-min intervals)
                     values = recursive_forecast(lgbm_model, df_lgbm, horizon, target_col=metric)
@@ -1308,6 +1383,18 @@ def main() -> None:
         metric = st.selectbox("Forecast metric", DEFAULT_METRICS, index=0)
         horizon_hours = st.select_slider("Forecast span (hours)", options=FORECAST_HOURS_CHOICES, value=6)
         
+        # --- NEW FEATURE: INTERVENTION SIMULATOR ---
+        st.divider()
+        st.subheader("🛠️ Control Simulator")
+        st.info("What if you take action now?")
+        control_action = st.radio(
+            "Select Action:",
+            ["None", "Open Window (Ventilation)", "Air Purifier (Max)", "Dehumidifier"],
+            index=0
+        )
+        # -------------------------------------------
+
+        st.divider()
         # Logic for prediction method
         method_options = ["Moving average"]
         if _bilstm_available and uploaded_file is None:
@@ -1401,6 +1488,8 @@ def main() -> None:
     
     horizon_steps = max(1, int(np.ceil((horizon_hours * 60) / freq_minutes)))
     current_ts = filtered["ts"].iloc[-1]
+    
+    # 1. Base AI Forecast
     future_ts, predictions, note = compute_forecast(
         df=filtered, # Pass recent history for context
         metric=metric, 
@@ -1410,7 +1499,14 @@ def main() -> None:
         is_custom_upload=is_custom_upload
     )
     
-    forecast_df = pd.DataFrame({"ts": future_ts, "Predicted": predictions})
+    # 2. Apply Physics Correction based on User Input
+    sim_predictions, sim_note = apply_control_physics(predictions, metric, control_action, freq_minutes)
+    
+    forecast_df = pd.DataFrame({
+        "ts": future_ts, 
+        "Predicted": predictions,
+        "Simulated": sim_predictions
+    })
     
     # Limit forecast to exactly the requested horizon
     horizon_end_time = current_ts + timedelta(hours=horizon_hours)
@@ -1434,27 +1530,61 @@ def main() -> None:
         font=dict(color="#d1d5db"),
     )
 
-    pred_fig = px.line(forecast_df, x="ts", y="Predicted", title="Forecasted Trajectory", line_shape="spline")
-    pred_fig.update_traces(line_color="#10b981", mode="lines")
-    # Add the last known point to connect the lines visually
-    pred_fig.add_scatter(
+    # UPDATED: Predictive Digital Twin Chart (Supports Both Lines)
+    pred_fig = go.Figure()
+
+    # Trace 1: Baseline (AI)
+    pred_fig.add_trace(go.Scatter(
+        x=forecast_df["ts"],
+        y=forecast_df["Predicted"],
+        mode='lines',
+        name='Baseline (No Action)',
+        line=dict(color='#f43f5e', width=3, dash='dot')
+    ))
+
+    # Trace 2: Simulated (With Physics Intervention)
+    if control_action != "None":
+        pred_fig.add_trace(go.Scatter(
+            x=forecast_df["ts"],
+            y=forecast_df["Simulated"],
+            mode='lines',
+            name=f'With {control_action}',
+            line=dict(color='#10b981', width=3),
+            fill='tonexty', # Visual highlight
+            fillcolor='rgba(16, 185, 129, 0.1)'
+        ))
+
+    # Connection point (Now)
+    pred_fig.add_trace(go.Scatter(
         x=[current_ts], 
         y=[filtered[metric].iloc[-1]], 
         mode="markers", 
         name="Now",
-        marker=dict(color="#f43f5e", size=8)
-    )
+        marker=dict(color="#22d3ee", size=8, symbol='diamond')
+    ))
+
     pred_fig.update_layout(
+        title="Predictive Digital Twin",
         height=300,
         margin=dict(l=20, r=20, t=40, b=20),
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
         font=dict(color="#d1d5db"),
+        hovermode="x unified",
+        legend=dict(orientation="h", y=1.1)
     )
 
     col1, col2 = st.columns(2)
     col1.plotly_chart(hist_fig, use_container_width=True)
     col2.plotly_chart(pred_fig, use_container_width=True)
+
+    # Show improvement metric if action is taken
+    if control_action != "None" and not forecast_df.empty:
+        base_end = forecast_df["Predicted"].iloc[-1]
+        sim_end = forecast_df["Simulated"].iloc[-1]
+        if base_end > 0:
+            imp_pct = ((base_end - sim_end) / base_end) * 100
+            st.success(f"💡 **Physics Simulation:** Performing '{control_action}' is projected to reduce {metric} by **{imp_pct:.1f}%** compared to doing nothing.")
 
     st.markdown(
         """
@@ -1472,9 +1602,12 @@ def main() -> None:
     current_value = snapshot.get(metric, float("nan"))
     outlook_rows = []
 
+    # Use simulated predictions for the outlook if an action is selected
+    target_preds = predictions if control_action == "None" else sim_predictions
+
     for minutes, label in outlook_targets:
         target_time = current_ts + timedelta(minutes=minutes)
-        projected_val = closest_projection_value(future_ts, predictions, target_time)
+        projected_val = closest_projection_value(future_ts, target_preds, target_time)
         direction = describe_change_direction(current_value, projected_val)
         value_text = f"{projected_val:.2f}" if projected_val is not None else "N/A"
         outlook_rows.append((label, direction, value_text))
@@ -1492,9 +1625,9 @@ def main() -> None:
     outlook_html += "</div>"
     st.markdown(outlook_html, unsafe_allow_html=True)
 
-    st.caption(f"ℹ️ {note}")
+    st.caption(f"ℹ️ Model: {note} | {sim_note}")
 
-    one_hour_point = pick_one_hour_point(future_ts, predictions, freq_minutes)
+    one_hour_point = pick_one_hour_point(future_ts, target_preds, freq_minutes)
     llm, llm_error = get_deepseek_llm()
 
     # 8. Insights Section
@@ -1512,7 +1645,7 @@ def main() -> None:
         if st.button("Summarize now + next 1h", type="primary", use_container_width=True):
             st.session_state["insight_text"] = generate_insights(
                 current=snapshot,
-                forecast=predictions,
+                forecast=target_preds,
                 metric=metric,
                 horizon_hours=horizon_hours,
                 freq_minutes=freq_minutes,
