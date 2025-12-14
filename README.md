@@ -3,7 +3,7 @@
 
 **Smart-IndoorCARE** is an intelligent dashboard for monitoring, visualizing, and forecasting Indoor Air Quality (IAQ).
 
-This prototype leverages hybrid machine learning models (**LightGBM**, **BiLSTM**) to predict air quality trends (PM2.5, CO2, etc.) and integrates a Generative AI assistant (**DeepSeek/OpenAI**) to provide real-time, actionable health recommendations based on current environmental conditions.
+This prototype leverages hybrid machine learning model (**LightGBM**) to predict air quality trends (PM2.5, CO2, etc.) and integrates a Generative AI assistant (**DeepSeek/OpenAI**) to provide real-time, actionable health recommendations based on current environmental conditions.
 
 ---
 
@@ -13,7 +13,6 @@ This prototype leverages hybrid machine learning models (**LightGBM**, **BiLSTM*
 * **Smart Alerts:** Detects critical thresholds and sudden spikes (e.g., Cooking events, Crowding).
 * **Hybrid Forecasting:**
     * **LightGBM (Recursive):** Trained specifically for PM2.5 short-term forecasting.
-    * **BiLSTM:** (Optional) Deep learning integration for complex temporal patterns.
     * **Moving Average:** Robust fallback for general trend lines.
 * **AI Co-Pilot:** Integrated chat interface (DeepSeek) to summarize conditions and answer user queries about air quality.
 * **Dual-Axis Visualization:** Compare CO2 levels against other metrics effectively.
@@ -27,7 +26,6 @@ This prototype leverages hybrid machine learning models (**LightGBM**, **BiLSTM*
 Smart-IndoorCARE/
 ├── app.py                     # Main Streamlit application
 ├── lightgbm_adapter.py        # Forecasting logic for LightGBM
-├── bilstm_adapter.py          # (Optional) Forecasting logic for BiLSTM
 ├── requirements.txt           # Python dependencies
 ├── .env                       # API Keys configuration (You create this)
 ├── scripts/
@@ -139,9 +137,6 @@ OPENAI_API_KEY=sk-your-openai-key-here
 
 1.  Run `pip install lightgbm`.
 2.  Ensure `lightgbm_model.txt` is inside the `Training Model` folder.
-
-**Q: BiLSTM is disabled**
-**A:** The BiLSTM model is computationally heavy and path-dependent. It is disabled by default for custom uploaded files to prevent errors. It works only with the default dataset structure.
 
 -----
 
